@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imbcal"
+version = "0.1.0.dev0"
+description = "Calibrated probability estimation under class imbalance: safe pipelines, prevalence-preserving augmentation and diagnostics"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Rolando de la Cruz"}]
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "scikit-learn>=1.3"]
+classifiers = ["License :: OSI Approved :: MIT License", "Programming Language :: Python :: 3",
+               "Topic :: Scientific/Engineering :: Artificial Intelligence"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
