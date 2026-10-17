@@ -99,6 +99,10 @@ def test_nested_and_output_options():
             res[(nested, output)] = m.selected_.label()
             if output == "ensemble":
                 assert len(m.estimators_) == 4 and len(m.calibrators_) == 4
+                assert abs(m.fold_weights_.sum() - 1) < 1e-12
+    m = ImbalanceCalibratedClassifier(LogisticRegression(), strategy="augment", chi_grid=(0.5,), stratify=False,
+                                      cv=3, random_state=2).fit(X, y)
+    assert m.predict_proba(X).shape == (n, 2)
     # same fold structure and candidates: the two nestings may differ only in the recalibration of the criterion
     assert all(isinstance(v, str) for v in res.values())
 

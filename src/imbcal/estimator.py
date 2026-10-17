@@ -8,7 +8,7 @@ import itertools
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.metrics import brier_score_loss, log_loss
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.utils.validation import check_is_fitted, check_X_y, check_array
 
 from .calibration import crossfit_calibrated, make_calibrator
@@ -71,6 +71,9 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         candidate, which inherits the guarantee of the selection by convexity of the loss and needs no extra fit.
         ``"refit"`` refits the selected candidate on all data and recalibrates it with the map fitted on the
         out-of-fold scores.
+    stratify : bool
+        Stratified folds (default, more stable with few events). The oracle inequality assumes folds independent of
+        the data, i.e. ``stratify=False``.
     random_state : int or None.
 
     Attributes
@@ -85,7 +88,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
 
     def __init__(self, estimator, strategy="none", generators=None, chi_grid=(0.0, 0.1, 0.25, 0.5, 0.75),
                  calibration="platt", criterion="log_loss", selection="best", n_synthetic=None, cv=5,
-                 nested="aligned", output="ensemble", random_state=None):
+                 nested="aligned", output="ensemble", stratify=True, random_state=None):
         self.estimator = estimator
         self.strategy = strategy
         self.generators = generators
@@ -97,6 +100,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         self.cv = cv
         self.nested = nested
         self.output = output
+        self.stratify = stratify
         self.random_state = random_state
 
     # ------------------------------------------------------------------ internals
@@ -148,8 +152,8 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         y = (y == self.classes_[1]).astype(int)
         rng = np.random.default_rng(self.random_state)
         V = self.cv
-        folds = list(StratifiedKFold(V, shuffle=True,
-                                     random_state=int(rng.integers(2**31 - 1))).split(X, y))
+        splitter = StratifiedKFold if self.stratify else KFold
+        folds = list(splitter(V, shuffle=True, random_state=int(rng.integers(2**31 - 1))).split(X, y))
         fid = np.empty(len(y), int)
         for v, (_, va) in enumerate(folds):
             fid[va] = v
@@ -198,6 +202,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         if self.output == "ensemble":
             self.estimators_ = fold_est[best]
             self.calibrators_ = maps[best]
+            self.fold_weights_ = np.array([len(va) for _, va in folds], float) / len(y)
         else:
             self.calibrator_ = make_calibrator(self.calibration).fit(oof[best], y)
             self.estimator_, _ = self._fit_predict(X, y, X[:1], best, rng)
@@ -208,8 +213,9 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         check_is_fitted(self, "selected_")
         X = check_array(X)
         if self.output == "ensemble":
-            p1 = np.mean([m.predict(np.clip(e.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6))
-                          for e, m in zip(self.estimators_, self.calibrators_)], axis=0)
+            p1 = np.average([m.predict(np.clip(e.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6))
+                             for e, m in zip(self.estimators_, self.calibrators_)], axis=0,
+                            weights=self.fold_weights_)
         else:
             p1 = self.calibrator_.predict(np.clip(self.estimator_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6))
         return np.c_[1 - p1, p1]
