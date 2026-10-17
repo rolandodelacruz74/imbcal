@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import itertools
+
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.metrics import brier_score_loss, log_loss
@@ -58,6 +60,17 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         one standard error of the per-observation loss difference.
     n_synthetic : number of synthetic points; default ``n_majority - n_minority``.
     cv : number of stratified folds.
+    nested : {"aligned", "crossfit"}
+        How the recalibration enters the selection criterion. ``"aligned"`` (default) is strictly nested: the
+        candidate evaluated on fold v, including its recalibration map, is built from the other folds only; the map of
+        fold v is fitted on scores of fold u != v from models trained without folds u and v, so each candidate costs
+        ``cv + cv(cv-1)/2`` fits. ``"crossfit"`` (v0.1 behaviour) fits the map of fold v on the out-of-fold scores of
+        the other folds, whose models saw fold v; cheaper (``cv`` fits) but not covered by the oracle inequality.
+    output : {"ensemble", "refit"}
+        ``"ensemble"`` (default) predicts with the average of the ``cv`` recalibrated fold predictors of the selected
+        candidate, which inherits the guarantee of the selection by convexity of the loss and needs no extra fit.
+        ``"refit"`` refits the selected candidate on all data and recalibrates it with the map fitted on the
+        out-of-fold scores.
     random_state : int or None.
 
     Attributes
@@ -66,12 +79,13 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     cv_results_ : dict label -> cross-validated recalibrated loss.
     candidate_distance_ : root mean squared difference between the out-of-fold probabilities of the selected
         scheme and those of ``chi = 1`` (controls the worst-case loss of the selection, Prop. 4 of the paper).
-    calibrator_ : fitted recalibration map.
+    calibrator_ : fitted recalibration map (``output="refit"``).
+    estimators_, calibrators_ : fold predictors and their maps (``output="ensemble"``).
     """
 
     def __init__(self, estimator, strategy="none", generators=None, chi_grid=(0.0, 0.1, 0.25, 0.5, 0.75),
                  calibration="platt", criterion="log_loss", selection="best", n_synthetic=None, cv=5,
-                 random_state=None):
+                 nested="aligned", output="ensemble", random_state=None):
         self.estimator = estimator
         self.strategy = strategy
         self.generators = generators
@@ -81,6 +95,8 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         self.selection = selection
         self.n_synthetic = n_synthetic
         self.cv = cv
+        self.nested = nested
+        self.output = output
         self.random_state = random_state
 
     # ------------------------------------------------------------------ internals
@@ -123,18 +139,52 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         self.classes_ = np.unique(y)
         if len(self.classes_) != 2:
             raise ValueError("binary classification only")
+        if self.nested not in ("aligned", "crossfit"):
+            raise ValueError(f"unknown nested {self.nested!r}")
+        if self.output not in ("ensemble", "refit"):
+            raise ValueError(f"unknown output {self.output!r}")
+        if self.selection not in ("best", "1se"):
+            raise ValueError(f"unknown selection {self.selection!r}")
         y = (y == self.classes_[1]).astype(int)
         rng = np.random.default_rng(self.random_state)
-        folds = list(StratifiedKFold(self.cv, shuffle=True,
+        V = self.cv
+        folds = list(StratifiedKFold(V, shuffle=True,
                                      random_state=int(rng.integers(2**31 - 1))).split(X, y))
+        fid = np.empty(len(y), int)
+        for v, (_, va) in enumerate(folds):
+            fid[va] = v
         cands = self._candidates()
         oof = {c: np.empty(len(y)) for c in cands}
-        for tr, va in folds:
+        fold_est = {c: [None] * V for c in cands}
+        for v, (tr, va) in enumerate(folds):
             cache = {}
             for c in cands:
-                oof[c][va] = self._fit_predict(X[tr], y[tr], X[va], c, rng, cache)[1]
-        crit_obs = {c: _loss(self.criterion, y, crossfit_calibrated(oof[c], y, folds, self.calibration))
-                    for c in cands}
+                fold_est[c][v], oof[c][va] = self._fit_predict(X[tr], y[tr], X[va], c, rng, cache)
+        maps = {c: [None] * V for c in cands}
+        pred = {c: np.empty(len(y)) for c in cands}
+        if self.nested == "aligned":
+            pair = {c: {} for c in cands}
+            for u, v in itertools.combinations(range(V), 2):
+                idx = np.where((fid != u) & (fid != v))[0]
+                iu, iv = folds[u][1], folds[v][1]
+                cache = {}
+                for c in cands:
+                    _, s = self._fit_predict(X[idx], y[idx], np.vstack([X[iu], X[iv]]), c, rng, cache)
+                    pair[c][(u, v)] = s[:len(iu)]
+                    pair[c][(v, u)] = s[len(iu):]
+            for c in cands:
+                for v, (_, va) in enumerate(folds):
+                    others = [u for u in range(V) if u != v]
+                    s = np.concatenate([pair[c][(u, v)] for u in others])
+                    yy = np.concatenate([y[folds[u][1]] for u in others])
+                    maps[c][v] = make_calibrator(self.calibration).fit(s, yy)
+                    pred[c][va] = maps[c][v].predict(oof[c][va])
+        else:
+            for c in cands:
+                for v, (tr, va) in enumerate(folds):
+                    maps[c][v] = make_calibrator(self.calibration).fit(oof[c][tr], y[tr])
+                    pred[c][va] = maps[c][v].predict(oof[c][va])
+        crit_obs = {c: _loss(self.criterion, y, pred[c]) for c in cands}
         crit = {c: float(v.mean()) for c, v in crit_obs.items()}
         best = min(cands, key=crit.get)
         base = cands[0]
@@ -142,20 +192,26 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             d = crit_obs[best] - crit_obs[base]
             if not d.mean() < -d.std(ddof=1) / np.sqrt(len(d)):
                 best = base
-        elif self.selection not in ("best", "1se"):
-            raise ValueError(f"unknown selection {self.selection!r}")
         self.selected_ = best
         self.cv_results_ = {c.label(): crit[c] for c in cands}
         self.candidate_distance_ = float(np.sqrt(np.mean((oof[best] - oof[base]) ** 2)))
-        self.calibrator_ = make_calibrator(self.calibration).fit(oof[best], y)
-        self.estimator_, _ = self._fit_predict(X, y, X[:1], best, rng)
+        if self.output == "ensemble":
+            self.estimators_ = fold_est[best]
+            self.calibrators_ = maps[best]
+        else:
+            self.calibrator_ = make_calibrator(self.calibration).fit(oof[best], y)
+            self.estimator_, _ = self._fit_predict(X, y, X[:1], best, rng)
         self.n_features_in_ = X.shape[1]
         return self
 
     def predict_proba(self, X):
-        check_is_fitted(self, "estimator_")
+        check_is_fitted(self, "selected_")
         X = check_array(X)
-        p1 = self.calibrator_.predict(np.clip(self.estimator_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6))
+        if self.output == "ensemble":
+            p1 = np.mean([m.predict(np.clip(e.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6))
+                          for e, m in zip(self.estimators_, self.calibrators_)], axis=0)
+        else:
+            p1 = self.calibrator_.predict(np.clip(self.estimator_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6))
         return np.c_[1 - p1, p1]
 
     def predict(self, X, threshold: float = 0.5):

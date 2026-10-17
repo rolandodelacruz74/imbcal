@@ -79,3 +79,46 @@ def test_sklearn_api_clone_and_params():
     from sklearn.base import clone
     m = ImbalanceCalibratedClassifier(LogisticRegression(), strategy="augment")
     c = clone(m); assert c.get_params()["strategy"] == "augment"
+
+
+def test_nested_and_output_options():
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+    from imbcal import ImbalanceCalibratedClassifier
+    rng = np.random.default_rng(0)
+    n = 600
+    y = (rng.random(n) < 0.1).astype(int)
+    X = rng.normal(size=(n, 3)) + 1.2 * y[:, None]
+    res = {}
+    for nested in ("aligned", "crossfit"):
+        for output in ("ensemble", "refit"):
+            m = ImbalanceCalibratedClassifier(LogisticRegression(), strategy="augment", chi_grid=(0.0, 0.5),
+                                              nested=nested, output=output, cv=4, random_state=1).fit(X, y)
+            p = m.predict_proba(X)[:, 1]
+            assert p.shape == (n,) and np.all((p > 0) & (p < 1))
+            res[(nested, output)] = m.selected_.label()
+            if output == "ensemble":
+                assert len(m.estimators_) == 4 and len(m.calibrators_) == 4
+    # same fold structure and candidates: the two nestings may differ only in the recalibration of the criterion
+    assert all(isinstance(v, str) for v in res.values())
+
+
+def test_aligned_map_independent_of_fold():
+    """The map of fold v must not change when the labels of fold v are permuted (strict nesting)."""
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import StratifiedKFold
+    from imbcal import ImbalanceCalibratedClassifier
+    rng = np.random.default_rng(3)
+    n = 400
+    y = (rng.random(n) < 0.15).astype(int)
+    X = rng.normal(size=(n, 2)) + y[:, None]
+    m = ImbalanceCalibratedClassifier(LogisticRegression(), strategy="none", cv=4, random_state=5).fit(X, y)
+    # rebuild the folds used inside fit
+    r = np.random.default_rng(5)
+    folds = list(StratifiedKFold(4, shuffle=True, random_state=int(r.integers(2**31 - 1))).split(X, y))
+    va = folds[0][1]
+    X2 = X.copy(); X2[va] = X[va][rng.permutation(len(va))]   # scramble features within fold 0 (keeps labels/strata)
+    m2 = ImbalanceCalibratedClassifier(LogisticRegression(), strategy="none", cv=4, random_state=5).fit(X2, y)
+    a, b = m.calibrators_[0], m2.calibrators_[0]
+    assert abs(a.intercept_ - b.intercept_) < 1e-8 and abs(a.slope_ - b.slope_) < 1e-8
