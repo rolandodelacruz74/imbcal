@@ -5,7 +5,7 @@
 2. Paper B hacia JMLR: teoría de R-tasas, método seguro y benchmark.
 3. Una librería de Python con su paper en *Journal of Statistical Software*. Se envía cuando A esté aceptado o en arXiv, porque JSS espera que la metodología esté publicada.
 
-**Nombre provisional:** `imbcal`, libre en PyPI. Otros candidatos libres: calibimb, probimb, calimb, prevaug e imbprob. El nombre final lo decide el autor.
+**Nombre:** `imbcal`, elegido por el autor el 2026-10-17; libre en PyPI a esa fecha.
 
 ## 1. Propósito y público
 
