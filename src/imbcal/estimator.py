@@ -56,8 +56,14 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     chi_grid : weights of the real minority points for ``"augment"`` (1 is always added).
     calibration : {"platt", "isotonic", None}. Fitted on out-of-fold scores of the selected scheme.
     criterion : {"log_loss", "brier"} used for selection.
-    selection : {"best", "1se"}. ``"1se"`` keeps ``chi = 1`` unless the best candidate improves on it by more than
-        one standard error of the per-observation loss difference.
+    selection : {"best", "1se", "safe"}. ``"1se"`` keeps ``chi = 1`` unless the best candidate improves on it by more
+        than one standard error of the per-observation loss difference. ``"safe"`` augments only if some candidate
+        improves on ``chi = 1`` with simultaneous significance at level ``alpha``: paired cross-validated loss
+        differences, within-fold variance (Bayle, Bayle, Janson and Mackey, 2020) and a max-T critical value from the
+        estimated correlation between candidates; among the candidates that pass, the one with the smallest criterion.
+        Asymptotically, the probability of selecting a candidate that is not better than ``chi = 1`` is at most
+        ``alpha``.
+    alpha : level of the ``"safe"`` selection (accepted risk of selecting a candidate that does not improve).
     n_synthetic : number of synthetic points; default ``n_majority - n_minority``.
     cv : number of stratified folds.
     nested : {"aligned", "crossfit"}
@@ -88,7 +94,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
 
     def __init__(self, estimator, strategy="none", generators=None, chi_grid=(0.0, 0.1, 0.25, 0.5, 0.75),
                  calibration="platt", criterion="log_loss", selection="best", n_synthetic=None, cv=5,
-                 nested="aligned", output="ensemble", stratify=True, random_state=None):
+                 nested="aligned", output="ensemble", stratify=True, alpha=0.2, random_state=None):
         self.estimator = estimator
         self.strategy = strategy
         self.generators = generators
@@ -101,6 +107,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         self.nested = nested
         self.output = output
         self.stratify = stratify
+        self.alpha = alpha
         self.random_state = random_state
 
     # ------------------------------------------------------------------ internals
@@ -147,7 +154,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             raise ValueError(f"unknown nested {self.nested!r}")
         if self.output not in ("ensemble", "refit"):
             raise ValueError(f"unknown output {self.output!r}")
-        if self.selection not in ("best", "1se"):
+        if self.selection not in ("best", "1se", "safe"):
             raise ValueError(f"unknown selection {self.selection!r}")
         y = (y == self.classes_[1]).astype(int)
         rng = np.random.default_rng(self.random_state)
@@ -196,6 +203,8 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             d = crit_obs[best] - crit_obs[base]
             if not d.mean() < -d.std(ddof=1) / np.sqrt(len(d)):
                 best = base
+        elif self.selection == "safe":
+            best, self.safe_z_, self.safe_critical_value_ = self._safe_select(cands, crit, crit_obs, fid, rng)
         self.selected_ = best
         self.cv_results_ = {c.label(): crit[c] for c in cands}
         self.candidate_distance_ = float(np.sqrt(np.mean((oof[best] - oof[base]) ** 2)))
@@ -208,6 +217,31 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             self.estimator_, _ = self._fit_predict(X, y, X[:1], best, rng)
         self.n_features_in_ = X.shape[1]
         return self
+
+    def _safe_select(self, cands, crit, crit_obs, fid, rng):
+        base = cands[0]
+        others = [c for c in cands[1:]]
+        n = len(fid)
+        D = np.array([crit_obs[c] - crit_obs[base] for c in others])
+        Dc = D.copy()
+        var = np.zeros(len(others))
+        for v in np.unique(fid):
+            idx = fid == v
+            var += idx.sum() / n * D[:, idx].var(1, ddof=1)
+            Dc[:, idx] -= Dc[:, idx].mean(1, keepdims=True)
+        active = np.flatnonzero(var > 0)
+        z = np.zeros(len(others))
+        z[active] = D[active].mean(1) / np.sqrt(var[active] / n)
+        zdict = {c.label(): float(z[j]) for j, c in enumerate(others)}
+        if len(active) == 0:
+            return base, zdict, np.inf
+        R = np.atleast_2d(np.nan_to_num(np.corrcoef(Dc[active]))) + 1e-9 * np.eye(len(active))
+        W = rng.multivariate_normal(np.zeros(len(active)), R, size=20000, method="eigh")
+        c_alpha = float(-np.quantile(W.min(1), self.alpha))
+        passed = [others[j] for j in active if z[j] < -c_alpha]
+        if not passed:
+            return base, zdict, c_alpha
+        return min(passed, key=crit.get), zdict, c_alpha
 
     def predict_proba(self, X):
         check_is_fitted(self, "selected_")

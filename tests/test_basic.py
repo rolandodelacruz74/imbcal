@@ -126,3 +126,21 @@ def test_aligned_map_independent_of_fold():
     m2 = ImbalanceCalibratedClassifier(LogisticRegression(), strategy="none", cv=4, random_state=5).fit(X2, y)
     a, b = m.calibrators_[0], m2.calibrators_[0]
     assert abs(a.intercept_ - b.intercept_) < 1e-8 and abs(a.slope_ - b.slope_) < 1e-8
+
+
+def test_safe_selection():
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+    from imbcal import ImbalanceCalibratedClassifier
+    rng = np.random.default_rng(4)
+    n = 500
+    y = (rng.random(n) < 0.12).astype(int)
+    X = rng.normal(size=(n, 3)) + y[:, None]
+    m = ImbalanceCalibratedClassifier(LogisticRegression(), strategy="augment", chi_grid=(0.25, 0.5, 0.75),
+                                      selection="safe", alpha=0.05, nested="crossfit", cv=4, random_state=0).fit(X, y)
+    assert np.isfinite(m.safe_critical_value_) and m.safe_critical_value_ > 1.5
+    assert set(m.safe_z_) == {k for k in m.cv_results_ if k != "none"}
+    # a selected augmented candidate must have passed the simultaneous test
+    if m.selected_.label() != "none":
+        assert m.safe_z_[m.selected_.label()] < -m.safe_critical_value_
+    assert m.predict_proba(X).shape == (n, 2)
