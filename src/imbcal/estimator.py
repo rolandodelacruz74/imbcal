@@ -64,6 +64,9 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         Asymptotically, the probability of selecting a candidate that is not better than ``chi = 1`` is at most
         ``alpha``.
     alpha : level of the ``"safe"`` selection (accepted risk of selecting a candidate that does not improve).
+    variance_floor : for ``"safe"``, each candidate's standard deviation is replaced by
+        ``max(sd, variance_floor * sd(loss of chi = 1))``; this makes the guarantee hold without fixing in advance which
+        candidates are non-degenerate (a floor can only make the test more conservative).
     n_synthetic : number of synthetic points; default ``n_majority - n_minority``.
     cv : number of stratified folds.
     nested : {"aligned", "crossfit"}
@@ -94,7 +97,8 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
 
     def __init__(self, estimator, strategy="none", generators=None, chi_grid=(0.0, 0.1, 0.25, 0.5, 0.75),
                  calibration="platt", criterion="log_loss", selection="best", n_synthetic=None, cv=5,
-                 nested="aligned", output="ensemble", stratify=True, alpha=0.2, random_state=None):
+                 nested="aligned", output="ensemble", stratify=True, alpha=0.2, variance_floor=0.05,
+                 random_state=None):
         self.estimator = estimator
         self.strategy = strategy
         self.generators = generators
@@ -108,6 +112,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         self.output = output
         self.stratify = stratify
         self.alpha = alpha
+        self.variance_floor = variance_floor
         self.random_state = random_state
 
     # ------------------------------------------------------------------ internals
@@ -229,9 +234,10 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             idx = fid == v
             var += idx.sum() / n * D[:, idx].var(1, ddof=1)
             Dc[:, idx] -= Dc[:, idx].mean(1, keepdims=True)
-        active = np.flatnonzero(var > 0)
+        tau = self.variance_floor * crit_obs[base].std()
+        active = np.flatnonzero(np.maximum(var, tau ** 2) > 0)
         z = np.zeros(len(others))
-        z[active] = D[active].mean(1) / np.sqrt(var[active] / n)
+        z[active] = D[active].mean(1) / np.sqrt(np.maximum(var[active], tau ** 2) / n)
         zdict = {c.label(): float(z[j]) for j, c in enumerate(others)}
         if len(active) == 0:
             return base, zdict, np.inf
