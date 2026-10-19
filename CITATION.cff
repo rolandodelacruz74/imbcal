@@ -7,9 +7,11 @@ authors:
     given-names: "Rolando"
     affiliation: "Universidad Adolfo Ibáñez"
     orcid: "https://orcid.org/0000-0002-1415-1809"
-version: "0.3.0"
+version: "0.3.1"
 date-released: "2026-10-19"
 license: MIT
+repository-code: "https://github.com/rolandodelacruz74/imbcal"
+url: "https://pypi.org/project/imbcal/"
 keywords:
   - calibration
   - class imbalance

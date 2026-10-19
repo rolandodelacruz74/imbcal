@@ -6,6 +6,8 @@
 pip install imbcal
 ```
 
+[PyPI](https://pypi.org/project/imbcal/) · [Source and issues](https://github.com/rolandodelacruz74/imbcal)
+
 Rebalancing (class weights, undersampling, SMOTE) is the default answer to class imbalance, but it targets classification and damages the probabilities that risk prediction needs, even after recalibration. `imbcal` wraps any scikit-learn classifier with pipelines that estimate probabilities at the natural prevalence:
 
 - **`strategy="none"`** (recommended default): fit at the natural prevalence, then recalibrate (Platt or isotonic) on out-of-fold scores.
@@ -45,7 +47,7 @@ More examples: `examples/quickstart.py` (simulated data, scikit-learn only) and 
 
 ## Status
 
-Alpha (0.3.0). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Planned additions:
+Alpha (0.3.1). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Planned additions:
 - generators for mixed (continuous and categorical) features;
 - group-wise calibration diagnostics;
 - wrappers for deep tabular generators;
