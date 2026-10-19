@@ -80,7 +80,11 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         ``"ensemble"`` (default) predicts with the average of the ``cv`` recalibrated fold predictors of the selected
         candidate, which inherits the guarantee of the selection by convexity of the loss and needs no extra fit.
         ``"refit"`` refits the selected candidate on all data and recalibrates it with the map fitted on the
-        out-of-fold scores.
+        out-of-fold scores. With high-variance base learners (for example unpenalized logistic regression with few
+        events per variable) the ensemble can be underconfident, with calibration slope above one: each fold map
+        corrects the overfitting of a single fold model, but the average of the fold models already overfits less.
+        ``"refit"`` is then usually better calibrated; with stable learners the ensemble is usually as good or better.
+        Compare both on the problem at hand when calibration slope matters.
     stratify : bool
         Stratified folds (default, more stable with few events). The oracle inequality assumes folds independent of
         the data, i.e. ``stratify=False``.
