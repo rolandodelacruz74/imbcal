@@ -9,7 +9,8 @@ import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.metrics import brier_score_loss, log_loss
 from sklearn.model_selection import KFold, StratifiedKFold
-from sklearn.utils.validation import check_is_fitted, check_X_y, check_array
+from sklearn.utils.multiclass import type_of_target
+from sklearn.utils.validation import check_is_fitted, check_X_y, check_array, validate_data
 
 from .calibration import crossfit_calibrated, make_calibrator
 from .generators import GaussianGenerator, SMOTEGenerator
@@ -150,11 +151,21 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         return est, np.clip(est.predict_proba(Xt)[:, 1], 1e-6, 1 - 1e-6)
 
     # ------------------------------------------------------------------ API
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.classifier_tags.multi_class = False
+        return tags
+
     def fit(self, X, y):
-        X, y = check_X_y(X, y)
+        X, y = validate_data(self, X, y)
+        y_type = type_of_target(y, input_name="y", raise_unknown=True)
+        if y_type not in ("binary",):
+            if y_type in ("continuous", "continuous-multioutput"):
+                raise ValueError(f"Unknown label type: {y_type!r}")
+            raise ValueError(f"Only binary classification is supported; got target type {y_type!r}")
         self.classes_ = np.unique(y)
-        if len(self.classes_) != 2:
-            raise ValueError("binary classification only")
+        if len(self.classes_) < 2:
+            raise ValueError("The data contains only one class; this classifier needs samples of 2 classes.")
         if self.nested not in ("aligned", "crossfit"):
             raise ValueError(f"unknown nested {self.nested!r}")
         if self.output not in ("ensemble", "refit"):
@@ -251,7 +262,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
 
     def predict_proba(self, X):
         check_is_fitted(self, "selected_")
-        X = check_array(X)
+        X = validate_data(self, X, reset=False)
         if self.output == "ensemble":
             p1 = np.average([m.predict(np.clip(e.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6))
                              for e, m in zip(self.estimators_, self.calibrators_)], axis=0,
@@ -261,4 +272,5 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         return np.c_[1 - p1, p1]
 
     def predict(self, X, threshold: float = 0.5):
+        check_is_fitted(self, "selected_")
         return self.classes_[(self.predict_proba(X)[:, 1] >= threshold).astype(int)]

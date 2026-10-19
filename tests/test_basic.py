@@ -144,3 +144,26 @@ def test_safe_selection():
     if m.selected_.label() != "none":
         assert m.safe_z_[m.selected_.label()] < -m.safe_critical_value_
     assert m.predict_proba(X).shape == (n, 2)
+
+
+def test_rebalancing_cost_matches_paper_tool():
+    from imbcal import rebalancing_cost
+    r = rebalancing_cost(p=71, prevalence=0.092, epv=2.5, auc=0.81)
+    m = r["methods"]
+    # values printed by tool/rebalancing_cost.py of the Paper A replication package
+    assert abs(m["mle"]["calibration_slope"] - 0.680) < 5e-4
+    assert abs(m["weights"]["calibration_slope"] - 0.606) < 5e-4
+    assert abs(m["undersampling"]["calibration_slope"] - 0.374) < 5e-4
+    assert abs(m["smote"]["calibration_slope"] - 0.533) < 5e-4
+    assert abs(r["van_houwelingen_shrinkage"] - 0.767) < 5e-4
+    assert m["mle"]["log_loss"] < m["weights"]["log_loss"] < m["undersampling"]["log_loss"]
+
+
+def test_scikit_learn_estimator_checks():
+    import warnings
+    est = ImbalanceCalibratedClassifier(LogisticRegression(max_iter=200), random_state=0, cv=3)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = check_estimator(est, on_fail=None)
+    failed = [r["check_name"] for r in res if r["status"] == "failed"]
+    assert not failed, failed
