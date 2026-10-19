@@ -41,6 +41,8 @@ print(probability_report(y_test, model.predict_proba(X_test)[:, 1]))
 
 Any object with a `sample(X_min, m, rng)` method can be used as a generator, including wrappers around deep tabular generators.
 
+More examples: `examples/quickstart.py` (simulated data, scikit-learn only) and `examples/ist_example.py` (International Stroke Trial).
+
 ## Status
 
 Alpha (0.3.0). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Planned additions:
@@ -48,6 +50,10 @@ Alpha (0.3.0). Binary outcomes only; requires scikit-learn >= 1.6. The API may c
 - group-wise calibration diagnostics;
 - wrappers for deep tabular generators;
 - multiclass outcomes.
+
+## Citation
+
+If you use imbcal, please cite it; the metadata are in `CITATION.cff` (GitHub shows them under "Cite this repository").
 
 ## License
 

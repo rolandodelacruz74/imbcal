@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use imbcal, please cite it as below."
+title: "imbcal: Calibrated Probability Estimation under Class Imbalance"
+type: software
+authors:
+  - family-names: "de la Cruz"
+    given-names: "Rolando"
+    affiliation: "Universidad Adolfo Ibáñez"
+    orcid: "https://orcid.org/0000-0002-1415-1809"
+version: "0.3.0"
+date-released: "2026-10-19"
+license: MIT
+keywords:
+  - calibration
+  - class imbalance
+  - SMOTE
+  - synthetic data
+  - scikit-learn

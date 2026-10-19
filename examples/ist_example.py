@@ -1,8 +1,9 @@
 """Example: International Stroke Trial (14-day death, prevalence 9.2%), development sample of 2000.
 
 Compares the natural fit + Platt, balanced weights + Platt and prevalence-preserving augmentation on the rest of
-the trial. Requires the processed file ist_prep.csv of the paper A replication package (not distributed).
-Usage: python3 ejemplo_ist.py PATH/ist_prep.csv
+the trial. Requires lightgbm and pandas, and the processed file ist_prep.csv, which prepare_ist.py (in the replication
+material of the imbcal paper) builds from the public IST database (https://datashare.ed.ac.uk/handle/10283/124).
+Usage: python ist_example.py PATH/ist_prep.csv
 """
 import sys
 import numpy as np, pandas as pd
