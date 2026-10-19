@@ -6,7 +6,7 @@
 pip install imbcal
 ```
 
-[PyPI](https://pypi.org/project/imbcal/) · [Source and issues](https://github.com/rolandodelacruz74/imbcal)
+[PyPI](https://pypi.org/project/imbcal/) · [Source and issues](https://github.com/rolandodelacruz74/imbcal) · [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23482346.svg)](https://doi.org/10.5281/zenodo.23482346)
 
 Rebalancing (class weights, undersampling, SMOTE) is the default answer to class imbalance, but it targets classification and damages the probabilities that risk prediction needs, even after recalibration. `imbcal` wraps any scikit-learn classifier with pipelines that estimate probabilities at the natural prevalence:
 
@@ -55,7 +55,7 @@ Alpha (0.3.1). Binary outcomes only; requires scikit-learn >= 1.6. The API may c
 
 ## Citation
 
-If you use imbcal, please cite it; the metadata are in `CITATION.cff` (GitHub shows them under "Cite this repository").
+If you use imbcal, please cite it: de la Cruz, R. (2026). *imbcal: Calibrated Probability Estimation under Class Imbalance* (version 0.3.1) [Software]. Zenodo. https://doi.org/10.5281/zenodo.23482346. The metadata are in `CITATION.cff` (GitHub shows them under "Cite this repository").
 
 ## License
 
