@@ -43,15 +43,28 @@ def probability_report(y, p) -> dict:
 def paired_comparison(scores_a, scores_b, n_train: int, n_test: int) -> dict:
     """Compare two methods evaluated on the same B repeated splits (lower score = better).
 
-    Returns the mean difference ``a - b``, the naive and the Nadeau–Bengio corrected standard errors,
-    sd(D) * sqrt(1/B + n_test/n_train), and the corrected z statistic.
+    Returns the mean difference ``a - b``, the naive and the Nadeau--Bengio corrected standard errors,
+    sd(D) * sqrt(1/B + n_test/n_train), the corrected z statistic, the number of splits in which ``a`` is
+    better (``wins_a``) and the two-sided exact sign-test p-value.
+
+    The correction was derived for random train/test splits of one data set with n_test < n_train. When the
+    training sets are small relative to the test sets the factor n_test/n_train makes it very conservative
+    (it does not vanish as B grows), and a warning is issued; the sign test is then a useful complement.
     """
+    import warnings
+    from scipy.stats import binomtest
     d = np.asarray(scores_a, float) - np.asarray(scores_b, float)
     B = len(d)
     if B < 2:
         raise ValueError("need at least two splits")
+    if n_test > n_train:
+        warnings.warn("n_test > n_train: the Nadeau-Bengio correction is very conservative in this design",
+                      UserWarning, stacklevel=2)
     sd = d.std(ddof=1)
     se_naive = sd / np.sqrt(B)
     se_nb = sd * np.sqrt(1 / B + n_test / n_train)
+    wins = int(np.sum(d < 0)); ties = int(np.sum(d == 0))
+    p_sign = float(binomtest(wins, B - ties, 0.5).pvalue) if B - ties > 0 else 1.0
     return dict(mean_difference=float(d.mean()), se_naive=float(se_naive), se_corrected=float(se_nb),
-                z_corrected=float(d.mean() / se_nb) if se_nb > 0 else 0.0, n_splits=B)
+                z_corrected=float(d.mean() / se_nb) if se_nb > 0 else 0.0, wins_a=wins, sign_test_p=p_sign,
+                n_splits=B)
