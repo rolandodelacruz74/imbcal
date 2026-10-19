@@ -14,7 +14,7 @@ from .metrics import (calibration_slope_intercept, expected_calibration_error, p
                       probability_report)
 from .planning import print_rebalancing_cost, rebalancing_cost
 
-__version__ = "0.3.0.dev0"
+__version__ = "0.3.0"
 __all__ = ["ImbalanceCalibratedClassifier", "Candidate", "BaseGenerator", "SMOTEGenerator", "GaussianGenerator",
            "CallableGenerator", "PlattCalibrator", "IsotonicCalibrator", "crossfit_calibrated",
            "calibration_slope_intercept", "expected_calibration_error", "probability_report", "paired_comparison",

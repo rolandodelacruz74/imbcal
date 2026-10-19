@@ -2,13 +2,25 @@
 
 **Calibrated probability estimation under class imbalance.**
 
+```
+pip install imbcal
+```
+
 Rebalancing (class weights, undersampling, SMOTE) is the default answer to class imbalance, but it targets classification and damages the probabilities that risk prediction needs, even after recalibration. `imbcal` wraps any scikit-learn classifier with pipelines that estimate probabilities at the natural prevalence:
 
 - **`strategy="none"`** (recommended default): fit at the natural prevalence, then recalibrate (Platt or isotonic) on out-of-fold scores.
 - **`strategy="augment"`**: *prevalence-preserving augmentation*. Synthetic minority points from any generator receive weights that keep the training prevalence unchanged. Real minority points get weight `chi`, and the `m` synthetic points get `(1 - chi) n_min / m`. The generator and `chi` are chosen by cross-validation of the **recalibrated** loss, and `chi = 1` (no augmentation) is always a candidate, so the selection can fall back to the natural fit.
 - **`strategy="weights"`**: balanced weights with recalibration, for comparison.
+- **`selection="safe"`**: augment only if some candidate beats no augmentation with simultaneous significance (cross-validation with confidence and a max-T critical value), which controls the probability of choosing a harmful augmentation.
 
-It also provides metrics (log-loss, Brier score, calibration slope and intercept, ECE), paired comparisons with Nadeau–Bengio corrected standard errors, and diagnostics for synthetic data.
+It also provides metrics (log-loss, Brier score, calibration slope and intercept, ECE), paired comparisons over repeated splits (Nadeau–Bengio corrected standard errors and a sign test), diagnostics for synthetic data, and a planning tool:
+
+```python
+from imbcal import rebalancing_cost, print_rebalancing_cost
+# predicted calibration slope, AUC and log-loss of maximum likelihood and of rebalanced
+# logistic regressions, before any data are collected
+print_rebalancing_cost(rebalancing_cost(p=36, prevalence=0.092, auc=0.81, epv=2.5))
+```
 
 ## Example
 
@@ -31,11 +43,11 @@ Any object with a `sample(X_min, m, rng)` method can be used as a generator, inc
 
 ## Status
 
-Pre-release (0.1.0.dev0). The API may change. Planned additions:
-- the `rebalancing_cost` predictor (asymptotic cost of rebalancing for logistic regression);
-- truncation of candidates for very rare events;
-- further generators;
-- a benchmarking module.
+Alpha (0.3.0). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Planned additions:
+- generators for mixed (continuous and categorical) features;
+- group-wise calibration diagnostics;
+- wrappers for deep tabular generators;
+- multiclass outcomes.
 
 ## License
 
