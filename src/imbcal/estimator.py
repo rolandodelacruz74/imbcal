@@ -88,7 +88,20 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     stratify : bool
         Stratified folds (default, more stable with few events). The oracle inequality assumes folds independent of
         the data, i.e. ``stratify=False``.
-    random_state : int or None.
+    random_state : int, numpy Generator or None
+        Seeds the fold assignment, the generator seeds and the max-T simulation of ``selection="safe"``.
+
+    Notes
+    -----
+    *Common random numbers.* Each generator in ``generators`` gets a fixed seed, derived deterministically from
+    ``random_state`` and its index in the list. Every call of the generator, in each cross-validation fold, in the
+    pairwise fits of ``nested="aligned"`` and in the final refit (``output="refit"``), receives a fresh
+    ``numpy.random.Generator`` with that seed. The synthetic sample is therefore a fixed function of the minority
+    sample it is given and of the seed, the same in every fold and shared by all ``chi`` values of that generator, as
+    assumed by the safe-selection theory of the companion paper (auxiliary randomness common to all folds; Bayle et
+    al., 2020, footnote 3). For full compliance the base estimator should also be deterministic given its training
+    data (for example a fixed ``random_state``). Before version 0.4.0 a single random stream advanced across folds and
+    candidates, so the synthetic points of each fold came from different draws.
 
     Attributes
     ----------
@@ -96,6 +109,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     cv_results_ : dict label -> cross-validated recalibrated loss.
     candidate_distance_ : root mean squared difference between the out-of-fold probabilities of the selected
         scheme and those of ``chi = 1`` (controls the worst-case loss of the selection, Prop. 4 of the paper).
+    generator_seeds_ : list of ``(repr(generator), seed)`` pairs, the fixed seed used for each generator.
     calibrator_ : fitted recalibration map (``output="refit"``).
     estimators_, calibrators_ : fold predictors and their maps (``output="ensemble"``).
     """
@@ -132,7 +146,22 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             GaussianGenerator(0.25), GaussianGenerator(0.5), SMOTEGenerator(5), SMOTEGenerator("sqrt")]
         return [Candidate(None, 1.0)] + [Candidate(g, float(c)) for g in gens for c in self.chi_grid if c < 1]
 
-    def _fit_predict(self, X, y, Xt, cand, rng, synth_cache=None):
+    def _synthetic(self, cand, X_min, m, seeds, synth_cache):
+        """Synthetic minority sample of candidate ``cand`` (common random numbers).
+
+        The generator receives a fresh ``numpy.random.Generator`` seeded with the fixed seed of its generator index,
+        so the draws are a deterministic function of ``(X_min, m, seed)``: the same in every fold, in the pairwise
+        fits of ``nested="aligned"`` and in the final refit, and shared by all ``chi`` values of one generator.
+        """
+        gi = self._gen_index[id(cand.generator)]
+        if synth_cache is not None and gi in synth_cache:
+            return synth_cache[gi]
+        S = cand.generator.sample(X_min, m, np.random.default_rng(seeds[gi]))
+        if synth_cache is not None:
+            synth_cache[gi] = S
+        return S
+
+    def _fit_predict(self, X, y, Xt, cand, seeds, synth_cache=None):
         est = clone(self.estimator)
         if cand.generator is None:
             est.fit(X, y)
@@ -142,13 +171,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         else:
             n1 = int(y.sum()); n0 = len(y) - n1
             m = int(self.n_synthetic) if self.n_synthetic else max(n0 - n1, n1)
-            key = id(cand.generator)
-            if synth_cache is not None and key in synth_cache:
-                S = synth_cache[key]
-            else:
-                S = cand.generator.sample(X[y == 1], m, rng)
-                if synth_cache is not None:
-                    synth_cache[key] = S
+            S = self._synthetic(cand, X[y == 1], m, seeds, synth_cache)
             XX = np.vstack([X, S]); YY = np.r_[y, np.ones(len(S), int)]
             W = np.r_[np.where(y == 1, cand.chi, 1.0), np.full(len(S), (1 - cand.chi) * n1 / len(S))]
             est.fit(XX, YY, sample_weight=W)
@@ -179,18 +202,28 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         y = (y == self.classes_[1]).astype(int)
         rng = np.random.default_rng(self.random_state)
         V = self.cv
+        fold_seed = int(rng.integers(2**31 - 1))
+        cands = self._candidates()
+        # common random numbers: one fixed seed per generator, derived from random_state and the generator index
+        gens = []
+        for c in cands[1:]:
+            if c.generator not in (None, "weights") and all(c.generator is not g for g in gens):
+                gens.append(c.generator)
+        self._gen_index = {id(g): i for i, g in enumerate(gens)}
+        root = int(rng.integers(2**63 - 1))
+        seeds = [int(np.random.SeedSequence([root, i]).generate_state(1, dtype=np.uint64)[0]) for i in range(len(gens))]
+        self.generator_seeds_ = [(repr(g), seeds[i]) for i, g in enumerate(gens)]
         splitter = StratifiedKFold if self.stratify else KFold
-        folds = list(splitter(V, shuffle=True, random_state=int(rng.integers(2**31 - 1))).split(X, y))
+        folds = list(splitter(V, shuffle=True, random_state=fold_seed).split(X, y))
         fid = np.empty(len(y), int)
         for v, (_, va) in enumerate(folds):
             fid[va] = v
-        cands = self._candidates()
         oof = {c: np.empty(len(y)) for c in cands}
         fold_est = {c: [None] * V for c in cands}
         for v, (tr, va) in enumerate(folds):
             cache = {}
             for c in cands:
-                fold_est[c][v], oof[c][va] = self._fit_predict(X[tr], y[tr], X[va], c, rng, cache)
+                fold_est[c][v], oof[c][va] = self._fit_predict(X[tr], y[tr], X[va], c, seeds, cache)
         maps = {c: [None] * V for c in cands}
         pred = {c: np.empty(len(y)) for c in cands}
         if self.nested == "aligned":
@@ -200,7 +233,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
                 iu, iv = folds[u][1], folds[v][1]
                 cache = {}
                 for c in cands:
-                    _, s = self._fit_predict(X[idx], y[idx], np.vstack([X[iu], X[iv]]), c, rng, cache)
+                    _, s = self._fit_predict(X[idx], y[idx], np.vstack([X[iu], X[iv]]), c, seeds, cache)
                     pair[c][(u, v)] = s[:len(iu)]
                     pair[c][(v, u)] = s[len(iu):]
             for c in cands:
@@ -234,7 +267,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             self.fold_weights_ = np.array([len(va) for _, va in folds], float) / len(y)
         else:
             self.calibrator_ = make_calibrator(self.calibration).fit(oof[best], y)
-            self.estimator_, _ = self._fit_predict(X, y, X[:1], best, rng)
+            self.estimator_, _ = self._fit_predict(X, y, X[:1], best, seeds)
         self.n_features_in_ = X.shape[1]
         return self
 

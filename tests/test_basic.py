@@ -167,3 +167,41 @@ def test_scikit_learn_estimator_checks():
         res = check_estimator(est, on_fail=None)
     failed = [r["check_name"] for r in res if r["status"] == "failed"]
     assert not failed, failed
+
+
+def _jitter(Xm, m, rng):
+    return Xm[rng.integers(0, len(Xm), m)] + 0.1 * rng.normal(size=(m, Xm.shape[1]))
+
+
+def test_common_random_numbers_across_folds():
+    """Same minority sample in two folds -> identical synthetic draws (fixed seed per generator)."""
+    from imbcal.estimator import Candidate
+    X, y = data(400, seed=7)
+    calls = []
+
+    def rec(Xm, m, rng):
+        out = _jitter(Xm, m, rng)
+        calls.append((Xm.copy(), out.copy()))
+        return out
+
+    gen = CallableGenerator(rec, name="recorder")
+    m = ImbalanceCalibratedClassifier(LogisticRegression(), strategy="augment", generators=[gen], chi_grid=(0.5,),
+                                      nested="aligned", cv=3, random_state=11).fit(X, y)
+    assert len(m.generator_seeds_) == 1
+    seed = m.generator_seeds_[0][1]
+    # every call (folds, pairwise fits) used a fresh rng with the same seed
+    assert len(calls) >= 3 + 3
+    for Xm, out in calls:
+        assert np.array_equal(out, _jitter(Xm, len(out), np.random.default_rng(seed)))
+    # two training folds that share the same minority sample but differ in the majority rows
+    calls.clear()
+    Xmin, Xmaj = X[y == 1], X[y == 0]
+    ya = np.r_[np.ones(len(Xmin), int), np.zeros(150, int)]
+    m._fit_predict(np.vstack([Xmin, Xmaj[:150]]), ya, X[:5], Candidate(gen, 0.5), [seed])
+    m._fit_predict(np.vstack([Xmin, Xmaj[150:300]]), ya, X[:5], Candidate(gen, 0.5), [seed])
+    (m1, s1), (m2, s2) = calls
+    assert np.array_equal(m1, m2) and np.array_equal(s1, s2)
+    # same random_state -> same seeds and same selection
+    from sklearn.base import clone
+    again = clone(m).fit(X, y)
+    assert again.generator_seeds_ == m.generator_seeds_ and again.cv_results_ == m.cv_results_
