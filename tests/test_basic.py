@@ -205,3 +205,51 @@ def test_common_random_numbers_across_folds():
     from sklearn.base import clone
     again = clone(m).fit(X, y)
     assert again.generator_seeds_ == m.generator_seeds_ and again.cv_results_ == m.cv_results_
+
+
+def test_weighting_validation_and_weights():
+    from imbcal.estimator import Candidate
+    X, y = data(400, seed=2)
+    with pytest.raises(ValueError, match="weighting"):
+        ImbalanceCalibratedClassifier(LogisticRegression(), strategy="augment", weighting="balanced").fit(X, y)
+
+    class Spy(LogisticRegression):
+        def fit(self, X, y, sample_weight=None):
+            Spy.last = (len(y), np.asarray(sample_weight), np.asarray(y))
+            return super().fit(X, y, sample_weight=sample_weight)
+
+    gen = GaussianGenerator(0.3)
+    n1 = int(y.sum()); n0 = len(y) - n1; m = n0 - n1
+    for weighting in ("prevalence", "unit"):
+        est = ImbalanceCalibratedClassifier(Spy(), strategy="augment", generators=[gen], weighting=weighting)
+        est._gen_index = {id(gen): 0}
+        est._fit_predict(X, y, X[:3], Candidate(gen, 0.25), [123])
+        ntot, w, yy = Spy.last
+        if weighting == "prevalence":
+            assert ntot == len(y) + m
+            assert np.allclose(w[:len(y)][y == 1], 0.25) and np.allclose(w[:len(y)][y == 0], 1.0)
+            assert np.allclose(w[len(y):], 0.75 * n1 / m)
+            # minority mass n1 and majority mass n0: natural prevalence
+            assert np.isclose(w[yy == 1].sum(), n1) and np.isclose(w[yy == 0].sum(), n0)
+        else:
+            assert ntot == len(y) + round(0.75 * m) and np.all(w == 1.0)
+
+
+def test_weighting_identity_debiased_risk():
+    """Weighted objective / n = natural risk + (1-chi)(n1/n)[mean syn loss - mean real minority loss]."""
+    rng = np.random.default_rng(0)
+    n, n1, m, chi = 200, 30, 170, 0.3
+    y = np.r_[np.ones(n1), np.zeros(n - n1)]
+    loss_real = rng.random(n); loss_syn = rng.random(m)
+    w_real = np.where(y == 1, chi, 1.0); w_syn = (1 - chi) * n1 / m
+    lhs = (np.sum(w_real * loss_real) + w_syn * loss_syn.sum()) / n
+    rhs = loss_real.mean() + (1 - chi) * n1 / n * (loss_syn.mean() - loss_real[y == 1].mean())
+    assert np.isclose(lhs, rhs)
+
+
+def test_unit_weighting_fit():
+    X, y = data(600, seed=5)
+    mdl = ImbalanceCalibratedClassifier(LogisticRegression(), strategy="augment", weighting="unit",
+                                        generators=[GaussianGenerator(0.25)], chi_grid=(0.0, 0.5), cv=3,
+                                        nested="crossfit", random_state=0).fit(X, y)
+    assert len(mdl.cv_results_) == 3 and mdl.predict_proba(X).shape == (len(y), 2)

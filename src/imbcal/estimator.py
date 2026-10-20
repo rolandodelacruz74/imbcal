@@ -88,6 +88,23 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     stratify : bool
         Stratified folds (default, more stable with few events). The oracle inequality assumes folds independent of
         the data, i.e. ``stratify=False``.
+    weighting : {"prevalence", "unit"}
+        Weights of the augmented training set for ``strategy="augment"``.
+        ``"prevalence"`` (default): prevalence-preserving weights. Majority points have weight 1, real minority points
+        weight ``chi`` and the ``m`` synthetic points weight ``(1 - chi) n_min / m``, so the minority mass stays
+        ``n_min`` and the training prevalence is the natural one. Divided by ``n``, the weighted objective is
+
+            R_nat + (1 - chi) (n_min / n) [mean minority loss on synthetic points
+                                           - mean minority loss on real minority points],
+
+        where ``R_nat`` is the empirical risk at the natural prevalence: the debiased-risk form of Schmutz, Humbert
+        and Mattei (ICLR 2023). The weights keep the target at the natural prevalence for every candidate, so no
+        intercept correction is needed, but they do not remove the generator error carried by the bracket; protection
+        against a poor generator comes from the selection rule, with ``chi = 1`` always available.
+        ``"unit"``: the ablation of the companion paper. Real and synthetic points all have weight 1 and the
+        candidate's ``chi`` indexes the intensity: ``round((1 - chi) m)`` synthetic points are added (none for
+        ``chi = 1``, all ``m`` for ``chi = 0``; the first points of the same seeded draw, so smaller intensities use a
+        subset of larger ones). The training prevalence then shifts, and the recalibration absorbs the shift.
     random_state : int, numpy Generator or None
         Seeds the fold assignment, the generator seeds and the max-T simulation of ``selection="safe"``.
 
@@ -117,7 +134,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     def __init__(self, estimator, strategy="none", generators=None, chi_grid=(0.0, 0.1, 0.25, 0.5, 0.75),
                  calibration="platt", criterion="log_loss", selection="best", n_synthetic=None, cv=5,
                  nested="aligned", output="ensemble", stratify=True, alpha=0.2, variance_floor=0.05,
-                 random_state=None):
+                 weighting="prevalence", random_state=None):
         self.estimator = estimator
         self.strategy = strategy
         self.generators = generators
@@ -132,6 +149,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         self.stratify = stratify
         self.alpha = alpha
         self.variance_floor = variance_floor
+        self.weighting = weighting
         self.random_state = random_state
 
     # ------------------------------------------------------------------ internals
@@ -172,8 +190,13 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             n1 = int(y.sum()); n0 = len(y) - n1
             m = int(self.n_synthetic) if self.n_synthetic else max(n0 - n1, n1)
             S = self._synthetic(cand, X[y == 1], m, seeds, synth_cache)
+            if self.weighting == "unit":
+                # ablation: (1 - chi) m synthetic points of unit weight, real points of unit weight
+                S = S[:int(round((1 - cand.chi) * m))]
+                W = np.ones(len(y) + len(S))
+            else:
+                W = np.r_[np.where(y == 1, cand.chi, 1.0), np.full(len(S), (1 - cand.chi) * n1 / len(S))]
             XX = np.vstack([X, S]); YY = np.r_[y, np.ones(len(S), int)]
-            W = np.r_[np.where(y == 1, cand.chi, 1.0), np.full(len(S), (1 - cand.chi) * n1 / len(S))]
             est.fit(XX, YY, sample_weight=W)
         return est, np.clip(est.predict_proba(Xt)[:, 1], 1e-6, 1 - 1e-6)
 
@@ -199,6 +222,8 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             raise ValueError(f"unknown output {self.output!r}")
         if self.selection not in ("best", "1se", "safe"):
             raise ValueError(f"unknown selection {self.selection!r}")
+        if self.weighting not in ("prevalence", "unit"):
+            raise ValueError(f"unknown weighting {self.weighting!r}; use 'prevalence' or 'unit'")
         y = (y == self.classes_[1]).astype(int)
         rng = np.random.default_rng(self.random_state)
         V = self.cv
