@@ -113,3 +113,27 @@ relative to real data with many dummy predictors, so read it asymmetrically:
 
 For sample-size planning of prediction models, see Riley et al. (2019, *Statistics in Medicine* 38:1276-1296) and
 Riley et al. (2025, arXiv:2504.18730).
+
+## Mixed continuous and binary features
+
+`SMOTEGenerator` and `GaussianGenerator` move points continuously in feature space. Applied to a binary or one-hot
+encoded column they produce fractional values (SMOTE interpolates between 0 and 1; the smoothed bootstrap adds
+Gaussian noise). When `strategy="augment"` uses such a generator on columns whose values are all in {0, 1}, `fit`
+emits a `UserWarning`.
+
+Both generators accept `continuous_features`, either column indices or a boolean mask. Only those columns are
+perturbed, and the remaining columns are copied from the parent point, so binary columns keep observed values:
+
+```python
+from imbcal import ImbalanceCalibratedClassifier, GaussianGenerator, SMOTEGenerator
+
+cont = [0, 1, 2]          # continuous columns; the others are binary
+model = ImbalanceCalibratedClassifier(
+    estimator, strategy="augment",
+    generators=[GaussianGenerator(0.25, continuous_features=cont), SMOTEGenerator(5, continuous_features=cont)],
+)
+```
+
+SMOTE still finds neighbours on all columns. With the default `continuous_features=None`, all columns are perturbed
+and the draws are those of earlier versions for a given random generator. A custom generator can declare
+`perturbs_continuously = True` and implement `perturbed_features(n_features)` to take part in the check.

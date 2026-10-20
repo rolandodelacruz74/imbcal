@@ -279,3 +279,52 @@ def test_safe_select_degenerate_candidates_use_normal_quantile():
     crit = {k: float(v.mean()) for k, v in crit_obs.items()}
     _, z2, c2v = est._safe_select([base, c1, c2], crit, crit_obs, fid, np.random.default_rng(1))
     assert abs(c2v - norm.ppf(0.8)) < 0.05 and np.isclose(z2[c1.label()], z[c1.label()])
+
+
+def _mixed(n=500, seed=0):
+    rng = np.random.default_rng(seed)
+    y = (rng.random(n) < 0.12).astype(int)
+    Xc = rng.normal(size=(n, 2)) + y[:, None]
+    Xb = (rng.random((n, 2)) < 0.3 + 0.3 * y[:, None]).astype(float)
+    return np.c_[Xc, Xb], y
+
+
+def test_binary_columns_warning():
+    X, y = _mixed()
+    kw = dict(strategy="augment", chi_grid=(0.5,), cv=3, nested="crossfit", random_state=0)
+    with pytest.warns(UserWarning, match="fractional values"):
+        ImbalanceCalibratedClassifier(LogisticRegression(), generators=[SMOTEGenerator(5)], **kw).fit(X, y)
+    with pytest.warns(UserWarning, match="binary"):
+        ImbalanceCalibratedClassifier(LogisticRegression(), generators=[GaussianGenerator(0.25)], **kw).fit(X, y)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        ImbalanceCalibratedClassifier(LogisticRegression(), generators=[SMOTEGenerator(5, continuous_features=[0, 1]),
+                                      GaussianGenerator(0.25, continuous_features=[True, True, False, False])],
+                                      **kw).fit(X, y)
+        ImbalanceCalibratedClassifier(LogisticRegression(), strategy="none", cv=3, random_state=0).fit(X, y)
+        Xc = X[:, :2]
+        ImbalanceCalibratedClassifier(LogisticRegression(), generators=[SMOTEGenerator(5)], **kw).fit(Xc, y)
+
+
+def test_continuous_features_copy_other_columns():
+    X, y = _mixed(seed=1)
+    Xm = X[y == 1]
+    for gen in (SMOTEGenerator(5, continuous_features=[0, 1]), GaussianGenerator(0.3, continuous_features=[0, 1]),
+                SMOTEGenerator("sqrt", continuous_features=np.array([True, True, False, False]))):
+        S = gen.sample(Xm, 300, np.random.default_rng(0))
+        assert S.shape == (300, 4)
+        assert set(np.unique(S[:, 2:])) <= {0.0, 1.0}
+        # binary part of every synthetic point is a row of the minority sample (copied from the parent)
+        rows = {tuple(r) for r in Xm[:, 2:]}
+        assert all(tuple(r) in rows for r in S[:, 2:])
+        assert len(np.unique(S[:, 0])) > len(Xm)            # continuous columns are perturbed
+    # default (all columns) keeps the 0.3.x draws for a given rng
+    a = SMOTEGenerator(5).sample(Xm, 50, np.random.default_rng(3))
+    b = SMOTEGenerator(5, continuous_features=[0, 1, 2, 3]).sample(Xm, 50, np.random.default_rng(3))
+    assert np.allclose(a, b)
+    assert repr(SMOTEGenerator(5)) == "SMOTEGenerator(k=5)"
+    with pytest.raises(ValueError):
+        GaussianGenerator(0.3, continuous_features=[0, 7]).sample(Xm, 5, np.random.default_rng(0))
+    with pytest.raises(ValueError):
+        GaussianGenerator(0.3, continuous_features=[True, False]).sample(Xm, 5, np.random.default_rng(0))

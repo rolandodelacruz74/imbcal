@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import itertools
+import warnings
 
 import numpy as np
 from scipy.stats import norm
@@ -54,7 +55,10 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         natural one. ``(generator, chi)`` is chosen by cross-validation of the *recalibrated* loss, with
         ``chi = 1`` (no augmentation) always among the candidates.
     generators : list of generators for ``"augment"``. Default: Gaussian smoothed bootstrap with h in {0.25, 0.5}
-        and SMOTE with k = 5 and k = sqrt(n_min). Features should be on a common scale.
+        and SMOTE with k = 5 and k = sqrt(n_min). Features should be on a common scale. If a generator that perturbs
+        features continuously (SMOTE-type or smoothed bootstrap) acts on columns whose values are all in {0, 1}, a
+        ``UserWarning`` is emitted, because the synthetic points will have fractional values there; restrict it with
+        ``continuous_features`` or encode those features differently.
     chi_grid : weights of the real minority points for ``"augment"`` (1 is always added).
     calibration : {"platt", "isotonic", None}. Fitted on out-of-fold scores of the selected scheme.
     criterion : {"log_loss", "brier"} used for selection.
@@ -202,6 +206,28 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             synth_cache[gi] = S
         return S
 
+    @staticmethod
+    def _check_binary_columns(X, cands):
+        """Warn if a continuous perturbation (SMOTE-type, smoothed bootstrap) acts on columns with values in {0, 1}."""
+        gens = {id(c.generator): c.generator for c in cands
+                if getattr(c.generator, "perturbs_continuously", False)}
+        if not gens:
+            return
+        binary = np.all((X == 0) | (X == 1), axis=0)
+        if not binary.any():
+            return
+        hit = set()
+        for g in gens.values():
+            hit.update(np.flatnonzero(binary & g.perturbed_features(X.shape[1])).tolist())
+        if hit:
+            cols = sorted(hit)
+            shown = ", ".join(map(str, cols[:10])) + (", ..." if len(cols) > 10 else "")
+            warnings.warn(
+                f"Columns {shown} take only the values 0 and 1, but a generator that perturbs features continuously "
+                "(SMOTE-type or smoothed bootstrap) acts on them, so synthetic points will have fractional values in "
+                "these binary columns. Restrict the generator to the continuous columns (continuous_features=...) or "
+                "encode the binary features differently.", UserWarning, stacklevel=3)
+
     def _fit_predict(self, X, y, Xt, cand, seeds, synth_cache=None):
         est = clone(self.estimator)
         if cand.generator is None:
@@ -252,6 +278,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         V = self.cv
         fold_seed = int(rng.integers(2**31 - 1))
         cands = self._candidates()
+        self._check_binary_columns(X, cands)
         # common random numbers: one fixed seed per generator, derived from random_state and the generator index
         gens = []
         for c in cands[1:]:
