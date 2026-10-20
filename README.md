@@ -13,7 +13,10 @@ Rebalancing (class weights, undersampling, SMOTE) is the default answer to class
 - **`strategy="none"`** (recommended default): fit at the natural prevalence, then recalibrate (Platt or isotonic) on out-of-fold scores.
 - **`strategy="augment"`**: *prevalence-preserving augmentation*. Synthetic minority points from any generator receive weights that keep the training prevalence unchanged. Real minority points get weight `chi`, and the `m` synthetic points get `(1 - chi) n_min / m`. The generator and `chi` are chosen by cross-validation of the **recalibrated** loss, and `chi = 1` (no augmentation) is always a candidate, so the selection can fall back to the natural fit.
 - **`strategy="weights"`**: balanced weights with recalibration, for comparison.
-- **`selection="safe"`**: augment only if some candidate beats no augmentation with simultaneous significance (cross-validation with confidence and a max-T critical value), which controls the probability of choosing a harmful augmentation.
+- **`weighting="unit"`**: the ablation with synthetic points of unit weight, where `chi` indexes the number of synthetic points.
+- **`selection="safe"`**: augment only if some candidate beats no augmentation with simultaneous significance (the cross-validation-with-confidence test of Lei, 2020, with a max-T critical value). Under the stated conditions, including loss stability, this controls asymptotically the probability of choosing an augmentation that does not improve on the natural fit.
+
+Synthetic draws use common random numbers: each generator has a fixed seed derived from `random_state`, and the same draws are used in every fold and in the final refit. The [user guide](https://github.com/rolandodelacruz74/imbcal/blob/main/docs/user_guide.md) explains the weights, the safe selection and its assumptions, the diagnostics and the planning tool.
 
 It also provides metrics (log-loss, Brier score, calibration slope and intercept, ECE), paired comparisons over repeated splits (Nadeau–Bengio corrected standard errors and a sign test), diagnostics for synthetic data, and a planning tool:
 
@@ -23,6 +26,8 @@ from imbcal import rebalancing_cost, print_rebalancing_cost
 # logistic regressions, before any data are collected
 print_rebalancing_cost(rebalancing_cost(p=36, prevalence=0.092, auc=0.81, epv=2.5))
 ```
+
+`rebalancing_cost` is a closed-form screen under a Gaussian model and is optimistic with many dummy predictors: a predicted slope below 0.9 flags a design that is too small, but a slope above 0.9 does not guarantee adequacy.
 
 ## Example
 
@@ -41,14 +46,14 @@ print(model.selected_.label(), model.candidate_distance_)
 print(probability_report(y_test, model.predict_proba(X_test)[:, 1]))
 ```
 
-Any object with a `sample(X_min, m, rng)` method can be used as a generator, including wrappers around deep tabular generators.
+Any object with a `sample(X_min, m, rng)` method can be used as a generator, including wrappers around deep tabular generators. With binary or one-hot columns, restrict the built-in generators to the continuous columns, for example `SMOTEGenerator(5, continuous_features=[0, 1, 2])`; `fit` warns when a continuous perturbation acts on a column with values in {0, 1}.
 
 More examples: `examples/quickstart.py` (simulated data, scikit-learn only) and `examples/ist_example.py` (International Stroke Trial).
 
 ## Status
 
-Alpha (0.3.1). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Planned additions:
-- generators for mixed (continuous and categorical) features;
+Alpha (0.4.0). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Changes are listed in [CHANGELOG.md](https://github.com/rolandodelacruz74/imbcal/blob/main/CHANGELOG.md). Planned additions:
+- generators for mixed (continuous and categorical) features beyond `continuous_features`;
 - group-wise calibration diagnostics;
 - wrappers for deep tabular generators;
 - multiclass outcomes.
