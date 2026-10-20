@@ -84,3 +84,32 @@ takes the candidate with the smallest criterion among those that pass.
 
 Predicted probabilities are clipped to `[1e-6, 1 - 1e-6]`. At this level the constants of the oracle inequalities of
 the paper are far from informative, and the theory describes rates only.
+
+## Diagnostics: `majority_exposure`
+
+`majority_exposure(prob_fn, X_min, X_syn)` returns `delta = mean(prob_fn(X_syn)) - mean(prob_fn(X_min))`, the shift
+in estimated risk between synthetic and real minority points. It is the plug-in analogue of the population risk shift
+`Delta eta` of the companion paper; negative values suggest that the generator moves minority mass towards regions
+dominated by the majority class, where the bias costs most.
+
+Treat it as a heuristic diagnostic, not a test. Even the population quantity is only a moderate predictor of harm:
+across 20 simulated schemes its rank correlation with the harm after recalibration was about -0.49. The plug-in
+version, with an estimated risk function and a finite synthetic sample, is not covered by any theory, and a value near
+zero or positive does not rule out local displacements that cancel on average.
+
+## Planning: `rebalancing_cost`
+
+`rebalancing_cost(p, prevalence, auc, n=None, epv=None)` predicts, before any model is fitted, the validation
+calibration slope, AUC and log-loss of an unpenalized logistic regression fitted by maximum likelihood, with balanced
+weights, after undersampling and after SMOTE, together with the van Houwelingen shrinkage factor.
+
+It is a closed-form planning screen under a Gaussian model (two-class Gaussian mixture in the proportional regime).
+Its maximum-likelihood slope predictions agree closely with simulation-based sample-size tools that use only
+`(p, prevalence, anticipated AUC)`, in the style of the R package samplesizedev of Pavlou et al. It is optimistic
+relative to real data with many dummy predictors, so read it asymmetrically:
+
+- a predicted calibration slope **below 0.9** indicates a design that is too small;
+- a predicted slope **above 0.9** does not guarantee adequacy.
+
+For sample-size planning of prediction models, see Riley et al. (2019, *Statistics in Medicine* 38:1276-1296) and
+Riley et al. (2025, arXiv:2504.18730).

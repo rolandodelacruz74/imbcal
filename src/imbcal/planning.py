@@ -10,9 +10,16 @@ together with the van Houwelingen shrinkage factor used in sample-size criteria 
 
 Inputs are quantities that can be specified before data collection: the number of model parameters p, the
 outcome prevalence, either the development sample size n or the events per variable (EPV), and the anticipated
-AUC of a well-fitted model. The predictions hold in the Gaussian-mixture model. In the two applications of the paper
-the observed damage was at least as large, more so with many rare binary predictors and at low EPV; this is an
-empirical observation, not a guarantee.
+AUC of a well-fitted model.
+
+What it is: a closed-form planning screen under a Gaussian model (two-class Gaussian mixture), not a sample-size
+calculation for the data at hand. Its maximum-likelihood slope predictions agree closely with simulation-based
+sample-size tools that use only (p, prevalence, anticipated AUC), in the style of the R package samplesizedev of
+Pavlou et al. It is optimistic relative to real data with many dummy (binary) predictors: in the two applications of the
+paper the observed damage was at least as large, more so at low EPV. Read it asymmetrically: a predicted calibration
+slope below 0.9 indicates a design that is too small, while a predicted slope above 0.9 does not guarantee adequacy.
+For sample-size planning of prediction models see Riley et al. (2019, Statistics in Medicine 38:1276-1296) and
+Riley et al. (2025, arXiv:2504.18730).
 
 Usage:
   >>> from imbcal.planning import rebalancing_cost, print_rebalancing_cost
@@ -45,7 +52,12 @@ def _evaluate(m, q, b_eff, s, pi):
     return dict(calibration_slope=2 * m / q, auc=float(norm.cdf(np.sqrt(2) * s * rho)), log_loss=float(ll))
 
 def rebalancing_cost(p, prevalence, auc, n=None, epv=None, smote_contraction=2 / 3):
-    """Predicted validation metrics for each method. Give n (development sample size) or epv (events per parameter).
+    """Predicted validation metrics for each method (closed-form Gaussian-model planning screen).
+
+    Give n (development sample size) or epv (events per parameter).
+    The predictions are optimistic for real data with many dummy predictors: a predicted calibration slope below 0.9
+    flags a design that is too small, but a slope above 0.9 does not guarantee adequacy (see the module docstring and
+    Riley et al., 2019, 2025).
     auc: anticipated AUC of a well-fitted model, used to set the separation s = Phi^{-1}(auc)/sqrt(2).
     smote_contraction: squared-distance contraction of SMOTE points toward the minority mean (2/3 in high dimension,
     Lemma 2; larger, e.g. 0.8-0.9, with many binary predictors)."""
@@ -87,5 +99,6 @@ def print_rebalancing_cost(res):
     for k, v in res["methods"].items():
         print(f"{k:<15}{v['calibration_slope']:>11.3f}{v['auc']:>8.3f}{v['log_loss']:>10.4f}")
     print(f"van Houwelingen shrinkage factor (maximum likelihood): {res['van_houwelingen_shrinkage']:.3f}")
-    print("Asymptotic Gaussian-mixture predictions; in the paper's two applications the observed damage was at least this large (empirical, not a guarantee).")
+    print("Closed-form Gaussian-model screen, optimistic with many dummy predictors: slope < 0.9 flags a design that is "
+          "too small; slope >= 0.9 does not guarantee adequacy.")
 
