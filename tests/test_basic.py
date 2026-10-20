@@ -253,3 +253,29 @@ def test_unit_weighting_fit():
                                         generators=[GaussianGenerator(0.25)], chi_grid=(0.0, 0.5), cv=3,
                                         nested="crossfit", random_state=0).fit(X, y)
     assert len(mdl.cv_results_) == 3 and mdl.predict_proba(X).shape == (len(y), 2)
+
+
+def test_safe_select_degenerate_candidates_use_normal_quantile():
+    """Candidates with zero within-fold variance are left out of the correlation matrix; if none is left,
+    c_alpha = z_{1-alpha} (previously about 0)."""
+    from scipy.stats import norm
+    from imbcal.estimator import Candidate
+    rng = np.random.default_rng(0)
+    n, V = 200, 4
+    fid = np.repeat(np.arange(V), n // V)
+    base = Candidate(None, 1.0)
+    c1, c2 = Candidate(GaussianGenerator(0.25), 0.5), Candidate(GaussianGenerator(0.5), 0.5)
+    lb = rng.exponential(size=n)
+    crit_obs = {base: lb, c1: lb - 0.01, c2: lb + 0.02}      # constant differences: zero within-fold variance
+    crit = {k: float(v.mean()) for k, v in crit_obs.items()}
+    est = ImbalanceCalibratedClassifier(LogisticRegression(), selection="safe", alpha=0.2)
+    best, z, c = est._safe_select([base, c1, c2], crit, crit_obs, fid, np.random.default_rng(1))
+    assert np.isclose(c, norm.ppf(0.8))
+    tau = 0.05 * lb.std()
+    assert np.isclose(z[c1.label()], -0.01 / (tau / np.sqrt(n)))
+    assert best == (c1 if z[c1.label()] < -c else base)
+    # a non-degenerate candidate enters the correlation matrix; the degenerate one keeps its floored z
+    crit_obs[c2] = lb + 0.05 * rng.normal(size=n)
+    crit = {k: float(v.mean()) for k, v in crit_obs.items()}
+    _, z2, c2v = est._safe_select([base, c1, c2], crit, crit_obs, fid, np.random.default_rng(1))
+    assert abs(c2v - norm.ppf(0.8)) < 0.05 and np.isclose(z2[c1.label()], z[c1.label()])

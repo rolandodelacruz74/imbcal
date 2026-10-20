@@ -49,3 +49,38 @@ Smaller intensities use the first points of the same seeded draw. The training p
 and the recalibration absorbs the shift. On the paper's benchmarks this ablation behaved like the prevalence-preserving
 version, which indicates that safety came from choosing the intensity by the recalibrated loss rather than from the
 weights.
+
+## Safe selection (`selection="safe"`)
+
+SAFE-chi augments only if some candidate beats the natural fit (`chi = 1`) with simultaneous significance, and then
+takes the candidate with the smallest criterion among those that pass.
+
+- **Decision test.** For each candidate `j` the per-observation differences
+  `D_ji = L(p_j(X_i), Y_i) - L(p_1(X_i), Y_i)` of the recalibrated cross-validated losses give
+  `z_j = sqrt(n) mean(D_j) / sd_j`, with `sd_j` the pooled within-fold standard deviation (Bayle, Bayle, Janson and
+  Mackey, 2020). This is the V-fold cross-validation-with-confidence test of Lei (2020, *JASA*) for the natural fit, in
+  the form studied by Kissel and Lei (arXiv:2211.04958), without Lei's screening of inequalities.
+- **Multiple testing.** Many candidates are tested against one reference with a family-wise guarantee for the selected
+  one, the structure of the Learn-then-Test literature (Angelopoulos, Bates, Candès, Jordan and Lei). The critical
+  value `c_alpha` is the upper `alpha`-quantile of `-min_j G_j`, `G ~ N(0, Gamma)`, with `Gamma` the estimated
+  correlation of the fold-centered differences (a max-T, many-to-one critical value). A candidate passes if
+  `z_j < -c_alpha`. Diagnostics: `safe_z_` and `safe_critical_value_`.
+- **Variance floor.** Each `sd_j` is replaced by `max(sd_j, variance_floor * sd(loss of chi = 1))`. The floor
+  protects against spurious significance when the differences are nearly degenerate (for example for `chi` close
+  to 1), but it lowers the power for gains smaller than order `n^{-1/2}`. Candidates with zero within-fold variance are
+  left out of `Gamma`; if none is left, `c_alpha` is the one-sided normal quantile `z_{1-alpha}` (since 0.4.0; before,
+  this edge case gave a critical value close to 0).
+- **What is guaranteed.** The guarantee is asymptotic and conditional. Under the conditions of Theorem SAFE-chi (a) of
+  the companion paper (folds of equal size assigned independently of the data, `stratify=False`; strictly nested
+  recalibration, `nested="aligned"`; auxiliary randomness common to all folds, provided by the fixed generator seeds;
+  a fixed grid and a natural fit fixed in advance; and the loss-stability condition of Bayle et al., 2020), the
+  probability of selecting a candidate whose fold-average risk is not better than that of `chi = 1` is at most
+  `alpha + o(1)`. Loss stability cannot be verified empirically for black-box learners (Luo and Barber,
+  arXiv:2405.15107), and the default `stratify=True` departs from the theory. Lei (2020) recommends `alpha` = 0.1 or
+  0.2 for discrete model selection.
+- **`candidate_distance_`** is the root mean squared distance, on uncalibrated out-of-fold scores, between the selected
+  scheme and `chi = 1`. It is a diagnostic related to the expected-loss bound of Proposition 9 of the paper, which uses
+  the maximum over candidates of the distance between recalibrated predictions.
+
+Predicted probabilities are clipped to `[1e-6, 1 - 1e-6]`. At this level the constants of the oracle inequalities of
+the paper are far from informative, and the theory describes rates only.

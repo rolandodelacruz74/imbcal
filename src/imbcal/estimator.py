@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import itertools
 
 import numpy as np
+from scipy.stats import norm
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.metrics import brier_score_loss, log_loss
 from sklearn.model_selection import KFold, StratifiedKFold
@@ -57,19 +58,35 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     chi_grid : weights of the real minority points for ``"augment"`` (1 is always added).
     calibration : {"platt", "isotonic", None}. Fitted on out-of-fold scores of the selected scheme.
     criterion : {"log_loss", "brier"} used for selection.
-    selection : {"best", "1se", "safe"}. ``"1se"`` keeps ``chi = 1`` unless the best candidate improves on it by more
-        than one standard error of the per-observation loss difference. ``"safe"`` augments only if some candidate
-        improves on ``chi = 1`` with simultaneous significance at level ``alpha``: paired cross-validated loss
-        differences, within-fold variance (Bayle, Bayle, Janson and Mackey, 2020) and a max-T critical value from the
-        estimated correlation between candidates; among the candidates that pass, the one with the smallest criterion.
-        Asymptotically, the probability of selecting a candidate that is not better than ``chi = 1`` is at most
-        ``alpha``.
-    alpha : level of the ``"safe"`` selection (accepted risk of selecting a candidate that does not improve).
+    selection : {"best", "1se", "safe"}
+        ``"best"``: the candidate with the smallest criterion. ``"1se"`` keeps ``chi = 1`` unless the best candidate
+        improves on it by more than one standard error of the per-observation loss difference. ``"safe"`` (SAFE-chi)
+        augments only if some candidate improves on ``chi = 1`` with simultaneous significance at level ``alpha``, and
+        then takes, among the candidates that pass, the one with the smallest criterion. The decision test is the
+        V-fold cross-validation-with-confidence test of Lei (2020, JASA) for the natural fit, in the form studied by
+        Kissel and Lei (arXiv:2211.04958): paired cross-validated loss differences, pooled within-fold variance
+        (Bayle, Bayle, Janson and Mackey, 2020) and a Gaussian max-T (many-to-one) critical value computed from the
+        estimated correlation between candidates; the multiple-testing structure, many candidates tested against one
+        null with a family-wise guarantee on the selected one, follows the Learn-then-Test literature (Angelopoulos,
+        Bates, Candès, Jordan and Lei). The guarantee is asymptotic and conditional: under the conditions of Theorem
+        SAFE-chi (a) of the companion paper (folds of equal size assigned independently of the data, i.e. ``stratify=False``; strictly nested
+        recalibration, ``nested="aligned"``; auxiliary randomness common to all folds, which the fixed generator seeds
+        provide; a fixed grid and a natural fit fixed in advance, so hyperparameters set by the user; and the
+        loss-stability condition of Bayle et al., 2020), the probability of selecting a candidate whose fold-average
+        risk is not better than that of ``chi = 1`` is at most ``alpha + o(1)``. The stability condition cannot be
+        verified empirically for black-box learners (Luo and Barber, arXiv:2405.15107), and the default
+        ``stratify=True`` departs from the theory.
+    alpha : level of the ``"safe"`` selection (accepted risk of selecting a candidate that does not improve). Lei (2020)
+        recommends 0.1 or 0.2 for discrete model selection.
     variance_floor : for ``"safe"``, each candidate's standard deviation is replaced by
-        ``max(sd, variance_floor * sd(loss of chi = 1))``; this makes the guarantee hold without fixing in advance which
-        candidates are non-degenerate (a floor can only make the test more conservative).
+        ``max(sd, variance_floor * sd(loss of chi = 1))``. The floor protects against spurious significance when the
+        loss differences are nearly degenerate (for example ``chi`` close to 1), and makes the guarantee hold without
+        fixing in advance which candidates are non-degenerate; it can only make the test more conservative, so it
+        lowers power for gains smaller than order ``n**-0.5``. Candidates with zero within-fold variance are left out
+        of the correlation matrix (up to rounding); if none is left, the critical value is the one-sided normal quantile
+        ``z_{1 - alpha}``.
     n_synthetic : number of synthetic points; default ``n_majority - n_minority``.
-    cv : number of stratified folds.
+    cv : number of folds (stratified unless ``stratify=False``).
     nested : {"aligned", "crossfit"}
         How the recalibration enters the selection criterion. ``"aligned"`` (default) is strictly nested: the
         candidate evaluated on fold v, including its recalibration map, is built from the other folds only; the map of
@@ -86,8 +103,8 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         ``"refit"`` is then usually better calibrated; with stable learners the ensemble is usually as good or better.
         Compare both on the problem at hand when calibration slope matters.
     stratify : bool
-        Stratified folds (default, more stable with few events). The oracle inequality assumes folds independent of
-        the data, i.e. ``stratify=False``.
+        Stratified folds (default, more stable with few events). The oracle inequality and the guarantee of
+        ``selection="safe"`` assume folds independent of the data, i.e. ``stratify=False``.
     weighting : {"prevalence", "unit"}
         Weights of the augmented training set for ``strategy="augment"``.
         ``"prevalence"`` (default): prevalence-preserving weights. Majority points have weight 1, real minority points
@@ -120,12 +137,18 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     data (for example a fixed ``random_state``). Before version 0.4.0 a single random stream advanced across folds and
     candidates, so the synthetic points of each fold came from different draws.
 
+    *Clipping.* Predicted probabilities are clipped to ``[1e-6, 1 - 1e-6]``; at this level the constants of the oracle
+    inequalities of the paper are far from informative, and the theory describes rates only.
+
     Attributes
     ----------
     selected_ : Candidate chosen.
     cv_results_ : dict label -> cross-validated recalibrated loss.
-    candidate_distance_ : root mean squared difference between the out-of-fold probabilities of the selected
-        scheme and those of ``chi = 1`` (controls the worst-case loss of the selection, Prop. 4 of the paper).
+    candidate_distance_ : root mean squared distance, on uncalibrated out-of-fold scores, between the selected scheme
+        and ``chi = 1``. A diagnostic related to the expected-loss bound of Proposition 9 of the companion paper, which
+        uses the maximum over candidates of the distance between recalibrated predictions.
+    safe_z_, safe_critical_value_ : for ``selection="safe"``, the studentized differences ``z_j`` of each candidate
+        with ``chi = 1`` and the critical value ``c_alpha``; a candidate passes when ``z_j < -c_alpha``.
     generator_seeds_ : list of ``(repr(generator), seed)`` pairs, the fixed seed used for each generator.
     calibrator_ : fitted recalibration map (``output="refit"``).
     estimators_, calibrators_ : fold predictors and their maps (``output="ensemble"``).
@@ -297,6 +320,16 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         return self
 
     def _safe_select(self, cands, crit, crit_obs, fid, rng):
+        """SAFE-chi: augment only if some candidate beats ``chi = 1`` with simultaneous significance.
+
+        For each candidate ``j`` the paired differences ``D_ji = L(p_j(X_i), Y_i) - L(p_1(X_i), Y_i)`` give
+        ``z_j = sqrt(n) mean(D_j) / max(sd_j, tau)``, with ``sd_j`` the pooled within-fold standard deviation (Bayle et
+        al., 2020) and ``tau = variance_floor * sd(loss of chi = 1)``. The critical value ``c_alpha`` is the upper
+        ``alpha``-quantile of ``-min_j G_j``, ``G ~ N(0, Gamma)``, with ``Gamma`` the correlation matrix of the
+        fold-centered differences of the candidates with ``sd_j > 0``; candidates with ``sd_j = 0`` are left out of
+        ``Gamma`` (their ``z_j`` uses the floor), and ``c_alpha = z_{1 - alpha}`` if no candidate is left. Returns the
+        candidate with the smallest criterion among those with ``z_j < -c_alpha``, or ``chi = 1`` if there is none.
+        """
         base = cands[0]
         others = [c for c in cands[1:]]
         n = len(fid)
@@ -314,9 +347,14 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         zdict = {c.label(): float(z[j]) for j, c in enumerate(others)}
         if len(active) == 0:
             return base, zdict, np.inf
-        R = np.atleast_2d(np.nan_to_num(np.corrcoef(Dc[active]))) + 1e-9 * np.eye(len(active))
-        W = rng.multivariate_normal(np.zeros(len(active)), R, size=20000, method="eigh")
-        c_alpha = float(-np.quantile(W.min(1), self.alpha))
+        # zero within-fold variance, up to rounding (e.g. differences constant within folds)
+        nondeg = np.flatnonzero(np.sqrt(var) > 1e-10 * max(crit_obs[base].std(), np.finfo(float).tiny))
+        if len(nondeg) == 0:
+            c_alpha = float(norm.ppf(1 - self.alpha))
+        else:
+            R = np.atleast_2d(np.nan_to_num(np.corrcoef(Dc[nondeg]))) + 1e-9 * np.eye(len(nondeg))
+            W = rng.multivariate_normal(np.zeros(len(nondeg)), R, size=20000, method="eigh")
+            c_alpha = max(0.0, float(-np.quantile(W.min(1), self.alpha)))
         passed = [others[j] for j in active if z[j] < -c_alpha]
         if not passed:
             return base, zdict, c_alpha
