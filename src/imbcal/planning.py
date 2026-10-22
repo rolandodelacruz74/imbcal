@@ -19,7 +19,8 @@ Pavlou et al. It is optimistic relative to real data with many dummy (binary) pr
 paper the observed damage was at least as large, more so at low EPV. Read it asymmetrically: a predicted calibration
 slope below 0.9 indicates a design that is too small, while a predicted slope above 0.9 does not guarantee adequacy.
 For sample-size planning of prediction models see Riley et al. (2019, Statistics in Medicine 38:1276-1296) and
-Riley et al. (2025, arXiv:2504.18730).
+Riley et al. (2026, BMC Medical Research Methodology 26:121,
+doi:10.1186/s12874-026-02856-7).
 
 Usage:
   >>> from imbcal.planning import rebalancing_cost, print_rebalancing_cost
@@ -57,7 +58,7 @@ def rebalancing_cost(p, prevalence, auc, n=None, epv=None, smote_contraction=2 /
     Give n (development sample size) or epv (events per parameter).
     The predictions are optimistic for real data with many dummy predictors: a predicted calibration slope below 0.9
     flags a design that is too small, but a slope above 0.9 does not guarantee adequacy (see the module docstring and
-    Riley et al., 2019, 2025).
+    Riley et al., 2019, 2026).
     auc: anticipated AUC of a well-fitted model, used to set the separation s = Phi^{-1}(auc)/sqrt(2).
     smote_contraction: squared-distance contraction of SMOTE points toward the minority mean (2/3 in high dimension,
     Lemma 2; larger, e.g. 0.8-0.9, with many binary predictors)."""

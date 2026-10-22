@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.1 (2026-10-22)
+
+### Fixed
+- The `UserWarning` for continuous perturbation of discrete columns detected only columns with values in {0, 1}, so
+  dummies after standardization (two distinct values other than 0 and 1) and {-1, 1} codings were missed. A column is
+  now flagged if it has at most two distinct finite values in any coding, or if it is integer-valued with at most five
+  distinct finite values (ordinal or count codes; threshold `imbcal.estimator._MAX_INTEGER_LEVELS`). NaN and infinite
+  values are ignored. The message names the columns and points to `continuous_features`. Only the warning changes:
+  fitted models, selections and predictions are identical to 0.4.0 for the same inputs and `random_state`.
+
+### Documentation
+- Riley et al. cited as published (2026, *BMC Medical Research Methodology* 26:121, doi:10.1186/s12874-026-02856-7)
+  instead of the 2025 arXiv preprint.
+
 ## 0.4.0 (2026-10-20)
 
 ### Changed

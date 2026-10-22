@@ -46,13 +46,13 @@ print(model.selected_.label(), model.candidate_distance_)
 print(probability_report(y_test, model.predict_proba(X_test)[:, 1]))
 ```
 
-Any object with a `sample(X_min, m, rng)` method can be used as a generator, including wrappers around deep tabular generators. With binary or one-hot columns, restrict the built-in generators to the continuous columns, for example `SMOTEGenerator(5, continuous_features=[0, 1, 2])`; `fit` warns when a continuous perturbation acts on a column with values in {0, 1}.
+Any object with a `sample(X_min, m, rng)` method can be used as a generator, including wrappers around deep tabular generators. With binary or one-hot columns, restrict the built-in generators to the continuous columns, for example `SMOTEGenerator(5, continuous_features=[0, 1, 2])`; `fit` warns when a continuous perturbation acts on a discrete column: at most two distinct values in any coding (including standardized dummies), or integer-valued with at most five levels.
 
 More examples: `examples/quickstart.py` (simulated data, scikit-learn only) and `examples/ist_example.py` (International Stroke Trial).
 
 ## Status
 
-Alpha (0.4.0). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Changes are listed in [CHANGELOG.md](https://github.com/rolandodelacruz74/imbcal/blob/main/CHANGELOG.md). Planned additions:
+Alpha (0.4.1). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Changes are listed in [CHANGELOG.md](https://github.com/rolandodelacruz74/imbcal/blob/main/CHANGELOG.md). Planned additions:
 - generators for mixed (continuous and categorical) features beyond `continuous_features`;
 - group-wise calibration diagnostics;
 - wrappers for deep tabular generators;
