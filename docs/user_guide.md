@@ -112,14 +112,20 @@ relative to real data with many dummy predictors, so read it asymmetrically:
 - a predicted slope **above 0.9** does not guarantee adequacy.
 
 For sample-size planning of prediction models, see Riley et al. (2019, *Statistics in Medicine* 38:1276-1296) and
-Riley et al. (2025, arXiv:2504.18730).
+Riley et al. (2026, *BMC Medical Research Methodology* 26:121, doi:10.1186/s12874-026-02856-7).
 
 ## Mixed continuous and binary features
 
 `SMOTEGenerator` and `GaussianGenerator` move points continuously in feature space. Applied to a binary or one-hot
 encoded column they produce fractional values (SMOTE interpolates between 0 and 1; the smoothed bootstrap adds
-Gaussian noise). When `strategy="augment"` uses such a generator on columns whose values are all in {0, 1}, `fit`
-emits a `UserWarning`.
+Gaussian noise). When `strategy="augment"` uses such a generator on discrete columns, `fit` emits a
+`UserWarning` that names the columns and points to `continuous_features`. Since 0.4.1 a column counts as discrete if
+it has at most two distinct finite values in any coding ({0, 1}, {-1, 1}, or a dummy after standardization, which
+takes two values other than 0 and 1), or if it is integer-valued with at most five distinct finite values (ordinal or
+count codes; the threshold is `imbcal.estimator._MAX_INTEGER_LEVELS`). NaN and infinite values are ignored in the
+count. In 0.4.0 only columns with values in {0, 1} were detected, so standardized dummies passed silently. Noise on
+dummy columns can act as a ridge-type penalty rather than as data augmentation, which is why the warning matters even
+when the selected scheme improves the loss.
 
 Both generators accept `continuous_features`, either column indices or a boolean mask. Only those columns are
 perturbed, and the remaining columns are copied from the parent point, so binary columns keep observed values:

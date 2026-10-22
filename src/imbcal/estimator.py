@@ -41,6 +41,38 @@ def _loss(name, y, p):
     raise ValueError(f"unknown criterion {name!r}")
 
 
+# Integer-valued columns with at most this many distinct finite values are treated as discrete (ordinal or count
+# codes) by the check for continuous perturbation of discrete columns. Columns with at most two distinct finite values
+# are always treated as discrete, whatever their coding.
+_MAX_INTEGER_LEVELS = 5
+
+
+def _discrete_columns(X):
+    """Boolean masks ``(two_valued, low_cardinality_integer)`` over the columns of ``X``.
+
+    ``two_valued``: at most two distinct finite values (and at least one). ``low_cardinality_integer``: integer-valued,
+    with three to ``_MAX_INTEGER_LEVELS`` distinct finite values. NaN and infinite values are ignored; a column with no
+    finite value is in neither mask.
+    """
+    X = np.asarray(X, dtype=float)
+    if X.ndim != 2:
+        raise ValueError("X must be two-dimensional")
+    p = X.shape[1]
+    two = np.zeros(p, bool)
+    ordinal = np.zeros(p, bool)
+    for j in range(p):
+        col = X[:, j]
+        col = col[np.isfinite(col)]
+        if col.size == 0:
+            continue
+        levels = np.unique(col)
+        if levels.size <= 2:
+            two[j] = True
+        elif levels.size <= _MAX_INTEGER_LEVELS and np.all(levels == np.round(levels)):
+            ordinal[j] = True
+    return two, ordinal
+
+
 class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     """Wrap any probabilistic classifier for calibrated probabilities at the natural prevalence.
 
@@ -56,9 +88,11 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         ``chi = 1`` (no augmentation) always among the candidates.
     generators : list of generators for ``"augment"``. Default: Gaussian smoothed bootstrap with h in {0.25, 0.5}
         and SMOTE with k = 5 and k = sqrt(n_min). Features should be on a common scale. If a generator that perturbs
-        features continuously (SMOTE-type or smoothed bootstrap) acts on columns whose values are all in {0, 1}, a
-        ``UserWarning`` is emitted, because the synthetic points will have fractional values there; restrict it with
-        ``continuous_features`` or encode those features differently.
+        features continuously (SMOTE-type or smoothed bootstrap) acts on discrete columns, a ``UserWarning`` is
+        emitted, because the synthetic points will have fractional values there. Discrete means at most two distinct
+        finite values in any coding ({0, 1}, {-1, 1}, a standardized dummy), or integer-valued with at most five
+        distinct finite values. Restrict the generator with ``continuous_features`` or encode those features
+        differently.
     chi_grid : weights of the real minority points for ``"augment"`` (1 is always added).
     calibration : {"platt", "isotonic", None}. Fitted on out-of-fold scores of the selected scheme.
     criterion : {"log_loss", "brier"} used for selection.
@@ -208,25 +242,45 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
 
     @staticmethod
     def _check_binary_columns(X, cands):
-        """Warn if a continuous perturbation (SMOTE-type, smoothed bootstrap) acts on columns with values in {0, 1}."""
+        """Warn if a continuous perturbation (SMOTE-type, smoothed bootstrap) acts on discrete columns.
+
+        Flagged columns: at most two distinct finite values (binary or dummy columns in any coding, e.g. {0, 1},
+        {-1, 1} or a standardized dummy), and integer-valued columns with at most ``_MAX_INTEGER_LEVELS`` distinct
+        finite values (ordinal or count codes). Non-finite values are ignored.
+        """
         gens = {id(c.generator): c.generator for c in cands
                 if getattr(c.generator, "perturbs_continuously", False)}
         if not gens:
             return
-        binary = np.all((X == 0) | (X == 1), axis=0)
-        if not binary.any():
+        two, ordinal = _discrete_columns(X)
+        if not (two.any() or ordinal.any()):
             return
-        hit = set()
+        perturbed = np.zeros(X.shape[1], bool)
         for g in gens.values():
-            hit.update(np.flatnonzero(binary & g.perturbed_features(X.shape[1])).tolist())
-        if hit:
-            cols = sorted(hit)
-            shown = ", ".join(map(str, cols[:10])) + (", ..." if len(cols) > 10 else "")
-            warnings.warn(
-                f"Columns {shown} take only the values 0 and 1, but a generator that perturbs features continuously "
-                "(SMOTE-type or smoothed bootstrap) acts on them, so synthetic points will have fractional values in "
-                "these binary columns. Restrict the generator to the continuous columns (continuous_features=...) or "
-                "encode the binary features differently.", UserWarning, stacklevel=3)
+            perturbed |= np.asarray(g.perturbed_features(X.shape[1]), bool)
+        hit_two = np.flatnonzero(two & perturbed).tolist()
+        hit_ord = np.flatnonzero(ordinal & perturbed).tolist()
+        if not (hit_two or hit_ord):
+            return
+
+        def show(cols):
+            listed = ", ".join(map(str, cols[:10])) + (", ..." if len(cols) > 10 else "")
+            return ("column " if len(cols) == 1 else "columns ") + listed
+
+        parts = []
+        if hit_two:
+            parts.append(f"{show(hit_two)} {'takes' if len(hit_two) == 1 else 'take'} at most two distinct values (binary or dummy coding, "
+                         "possibly standardized)")
+        if hit_ord:
+            parts.append(f"{show(hit_ord)} {'is' if len(hit_ord) == 1 else 'are'} integer-valued with at most {_MAX_INTEGER_LEVELS} distinct "
+                         "values (ordinal or count codes)")
+        warnings.warn(
+            "In X, " + "; ".join(parts) + ". A generator that perturbs features continuously (SMOTE-type or smoothed "
+            "bootstrap) acts on them, so synthetic points will have fractional values in these discrete columns, and "
+            "the noise can act as a ridge-type penalty rather than as data augmentation. Pass the indices of the "
+            "continuous columns to the generator, e.g. SMOTEGenerator(5, continuous_features=[...]) or "
+            "GaussianGenerator(0.25, continuous_features=[...]), so that the other columns are copied from the "
+            "parent point, or encode the discrete features differently.", UserWarning, stacklevel=3)
 
     def _fit_predict(self, X, y, Xt, cand, seeds, synth_cache=None):
         est = clone(self.estimator)

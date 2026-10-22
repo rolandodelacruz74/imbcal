@@ -307,6 +307,70 @@ def test_binary_columns_warning():
         ImbalanceCalibratedClassifier(LogisticRegression(), generators=[SMOTEGenerator(5)], **kw).fit(Xc, y)
 
 
+def _fit_warns(X, y, gen):
+    import warnings
+    kw = dict(strategy="augment", chi_grid=(0.5,), cv=3, nested="crossfit", random_state=0)
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        ImbalanceCalibratedClassifier(LogisticRegression(), generators=[gen], **kw).fit(X, y)
+    return [str(w.message) for w in rec if issubclass(w.category, UserWarning) and "fractional values" in str(w.message)]
+
+
+def test_discrete_columns_detection():
+    from imbcal.estimator import _discrete_columns
+    rng = np.random.default_rng(0)
+    n = 200
+    d01 = (rng.random(n) < 0.3).astype(float)
+    std_dummy = (d01 - d01.mean()) / d01.std()          # dummy after StandardScaler: two non-{0,1} values
+    pm1 = 2 * d01 - 1                                      # {-1, 1} coding
+    cont = rng.normal(size=n)
+    ordinal = rng.integers(1, 5, size=n).astype(float)     # four integer levels
+    X = np.c_[d01, std_dummy, pm1, cont, ordinal]
+    two, ordn = _discrete_columns(X)
+    assert two.tolist() == [True, True, True, False, False]
+    assert ordn.tolist() == [False, False, False, False, True]
+    # a standardized ordinal column is no longer integer-valued: not flagged as ordinal
+    two2, ord2 = _discrete_columns(((ordinal - ordinal.mean()) / ordinal.std())[:, None])
+    assert not two2[0] and not ord2[0]
+    # NaN and inf are ignored; an all-NaN column is in neither mask
+    Xn = X.copy()
+    Xn[::7, :] = np.nan
+    Xn[3, 1] = np.inf
+    assert _discrete_columns(Xn)[0].tolist() == [True, True, True, False, False]
+    assert _discrete_columns(Xn)[1].tolist() == [False, False, False, False, True]
+    allnan = np.full((10, 1), np.nan)
+    assert not _discrete_columns(allnan)[0][0] and not _discrete_columns(allnan)[1][0]
+    # a continuous column with a single NaN stays continuous
+    c = cont.copy(); c[0] = np.nan
+    assert not _discrete_columns(c[:, None])[0][0]
+
+
+def test_warning_standardized_and_pm1_dummies():
+    X, y = _mixed()
+    Xs = (X - X.mean(0)) / X.std(0)                        # all columns standardized
+    for Xv in (X, Xs, np.c_[X[:, :2], 2 * X[:, 2:] - 1]):  # {0,1}, standardized, {-1,1}
+        for gen in (SMOTEGenerator(5), GaussianGenerator(0.25)):
+            msgs = _fit_warns(Xv, y, gen)
+            assert len(msgs) == 1
+            assert "columns 2, 3 take at most two distinct values" in msgs[0]
+            assert "continuous_features" in msgs[0]
+        # restricting the generator to the continuous columns silences it
+        assert _fit_warns(Xv, y, SMOTEGenerator(5, continuous_features=[0, 1])) == []
+    # purely continuous data: no warning
+    assert _fit_warns(Xs[:, :2], y, GaussianGenerator(0.25)) == []
+
+
+def test_warning_low_cardinality_integer():
+    X, y = _mixed()
+    rng = np.random.default_rng(5)
+    Xo = np.c_[X[:, :2], rng.integers(0, 4, size=len(y)).astype(float)]
+    msgs = _fit_warns(Xo, y, SMOTEGenerator(5))
+    assert len(msgs) == 1 and "column 2 is integer-valued with at most 5" in msgs[0]
+    # more integer levels than the threshold: treated as continuous
+    Xc = np.c_[X[:, :2], rng.integers(0, 20, size=len(y)).astype(float)]
+    assert _fit_warns(Xc, y, SMOTEGenerator(5)) == []
+
+
 def test_continuous_features_copy_other_columns():
     X, y = _mixed(seed=1)
     Xm = X[y == 1]

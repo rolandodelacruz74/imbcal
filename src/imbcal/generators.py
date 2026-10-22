@@ -36,7 +36,8 @@ class BaseGenerator:
     """Interface: ``sample(X_min, m, rng) -> ndarray of shape (m, n_features)``.
 
     Subclasses that move points continuously in feature space set ``perturbs_continuously = True`` and implement
-    ``perturbed_features(n_features)``; the estimator then warns when a perturbed column is binary.
+    ``perturbed_features(n_features)``; the estimator then warns when a perturbed column is discrete (at most two
+    distinct finite values, or integer-valued with few levels).
     """
 
     perturbs_continuously = False
