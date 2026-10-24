@@ -20,8 +20,13 @@ import numpy as np
 from scipy.optimize import fsolve
 from scipy.special import expit, logit
 
-NODES = 160
-gh_x, gh_w = np.polynomial.hermite_e.hermegauss(NODES)
+# Expectations over Z ~ N(0, 1): Gauss-Legendre rule with 600 nodes on [-12, 12] against the normal density.
+# (Version 0.4.0 used a 160-node Gauss-Hermite rule, inaccurate near the separability threshold when s is large.)
+# The names gh_x and gh_w are kept for backward compatibility.
+NODES = 600
+_lx, _lw = np.polynomial.legendre.leggauss(NODES)
+gh_x = 12.0 * _lx
+gh_w = 12.0 * _lw * np.exp(-gh_x ** 2 / 2)
 gh_w = gh_w / gh_w.sum()
 # Reducción a una dimensión: v = α s + y b + τ Z con τ² = α² + σ², y por Stein
 # E[ψ H] = α E[dψ/dv], dψ/dv = −c ℓ''(t) / (1 + λ c ℓ''(t)).

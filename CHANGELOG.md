@@ -9,6 +9,16 @@
   distinct finite values (ordinal or count codes; threshold `imbcal.estimator._MAX_INTEGER_LEVELS`). NaN and infinite
   values are ignored. The message names the columns and points to `continuous_features`. Only the warning changes:
   fitted models, selections and predictions are identical to 0.4.0 for the same inputs and `random_state`.
+- `rebalancing_cost`: expectations over the normal distribution in the internal fixed-point solver now use a
+  600-node Gauss-Legendre rule on [-12, 12] instead of a 160-node Gauss-Hermite rule, which was inaccurate near the
+  separability threshold for large separations (errors of several per cent and more at kappa above 0.9 kappa_sep with
+  s >= 1.5). In typical clinical designs (kappa below about 0.3 kappa_sep) predictions agree with 0.4.0 to 1e-4.
+  Estimators, generators and metrics are unaffected.
+
+### Changed
+- `rebalancing_cost`: the SMOTE prediction (contracted-copies approximation) is marked experimental: the result for
+  `"smote"` carries a `note`, and `print_rebalancing_cost` flags it. A revised planning module, with sample-size
+  criteria for calibration and discrimination, is planned for 0.5.0.
 
 ### Documentation
 - Riley et al. cited as published (2026, *BMC Medical Research Methodology* 26:121, doi:10.1186/s12874-026-02856-7)

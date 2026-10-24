@@ -5,7 +5,8 @@ solved at zero penalty) of the validation calibration slope, AUC and log-loss of
   - by maximum likelihood ("mle"),
   - with balanced class weights followed by the intercept correction ("weights"),
   - after random undersampling to balance, with the intercept correction ("undersampling"),
-  - after balanced SMOTE, with the intercept correction ("smote"; contracted-copies model),
+  - after balanced SMOTE, with the intercept correction ("smote"; EXPERIMENTAL: contracted-copies approximation,
+    whose asymptotics are not those of SMOTE itself; use it for orientation only),
 together with the van Houwelingen shrinkage factor used in sample-size criteria (Riley et al., 2019).
 
 Inputs are quantities that can be specified before data collection: the number of model parameters p, the
@@ -83,6 +84,8 @@ def _rebalancing_cost(p, prevalence, auc, n=None, epv=None, smote_contraction=2 
     nw2 = sol["alpha"] ** 2 + sol["tau"] ** 2 + sol["theta"] ** 2
     A = sol["alpha"] * s                                           # m = <w, mu>
     out["smote"] = _evaluate(A, nw2, sol["b"] - np.log(r), s, pi)
+    out["smote"]["note"] = ("experimental: contracted-copies approximation, not the exact asymptotics of SMOTE; "
+                            "for orientation only")
     # van Houwelingen shrinkage factor with R2_CS of the Bayes model
     H = -(pi * np.log(pi) + (1 - pi) * np.log(1 - pi))
     Lb = _evaluate(2 * s * s, 4 * s * s, logit(pi), s, pi)["log_loss"]
@@ -98,8 +101,11 @@ def print_rebalancing_cost(res):
           f"anticipated AUC={i['auc']:.3f}")
     print(f"{'method':<15}{'cal. slope':>11}{'AUC':>8}{'log-loss':>10}")
     for k, v in res["methods"].items():
-        print(f"{k:<15}{v['calibration_slope']:>11.3f}{v['auc']:>8.3f}{v['log_loss']:>10.4f}")
+        lab = k + ("*" if "note" in v else "")
+        print(f"{lab:<15}{v['calibration_slope']:>11.3f}{v['auc']:>8.3f}{v['log_loss']:>10.4f}")
     print(f"van Houwelingen shrinkage factor (maximum likelihood): {res['van_houwelingen_shrinkage']:.3f}")
+    if any("note" in v for v in res["methods"].values()):
+        print("* experimental (contracted-copies approximation of SMOTE): for orientation only.")
     print("Closed-form Gaussian-model screen, optimistic with many dummy predictors: slope < 0.9 flags a design that is "
           "too small; slope >= 0.9 does not guarantee adequacy.")
 
