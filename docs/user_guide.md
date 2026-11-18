@@ -50,7 +50,32 @@ and the recalibration absorbs the shift. On the paper's benchmarks this ablation
 version, which indicates that safety came from choosing the intensity by the recalibrated loss rather than from the
 weights.
 
-## Safe selection (`selection="safe"`)
+## Selection rules and stored candidates
+
+The default `selection="best"` takes the candidate with the smallest recalibrated cross-validated loss.
+`selection="1se"` keeps the natural fit (`chi = 1`) unless the best candidate improves on it by more than one
+standard error of the per-observation loss difference, that is, unless the studentized mean difference is below -1;
+the companion papers call it the `z < -1` rule. For a single prespecified candidate its nominal one-sided level would
+be about 0.16, but it is applied to the minimizer of the criterion, so its actual level is higher.
+
+For benchmarks it is often useful to evaluate every candidate and to apply several rules afterwards. With
+`keep_candidates=True` the classifier keeps the per-observation losses of every candidate (`cv_loss_obs_`) and, with
+`output="ensemble"`, their fold predictors; `predict_proba_candidates(X)` returns the calibrated fold-ensemble
+probabilities of all candidates, and `imbcal.select_candidate(clf.cv_loss_obs_, "none", rule)` applies `"best"` or
+`"1se"` exactly as `fit` does:
+
+```python
+clf = ImbalanceCalibratedClassifier(est, strategy="augment", keep_candidates=True, random_state=0).fit(X, y)
+probs = clf.predict_proba_candidates(X_test)                 # label -> probabilities
+chosen = {r: imbcal.select_candidate(clf.cv_loss_obs_, "none", r) for r in ("best", "1se")}
+```
+
+Keeping the candidates does not change the fit; it increases memory by a factor of about the number of candidates.
+
+## Safe selection (`selection="safe"`, experimental)
+
+`selection="safe"` emits a `FutureWarning`: the method is experimental until it is described in a published
+article, and its guarantee is asymptotic and conditional (below).
 
 SAFE-chi augments only if some candidate beats the natural fit (`chi = 1`) with simultaneous significance, and then
 takes the candidate with the smallest criterion among those that pass.

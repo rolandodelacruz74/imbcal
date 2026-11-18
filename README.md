@@ -14,7 +14,8 @@ Rebalancing (class weights, undersampling, SMOTE) is the default answer to class
 - **`strategy="augment"`**: *prevalence-preserving augmentation*. Synthetic minority points from any generator receive weights that keep the training prevalence unchanged. Real minority points get weight `chi`, and the `m` synthetic points get `(1 - chi) n_min / m`. The generator and `chi` are chosen by cross-validation of the **recalibrated** loss, and `chi = 1` (no augmentation) is always a candidate, so the selection can fall back to the natural fit.
 - **`strategy="weights"`**: balanced weights with recalibration, for comparison.
 - **`weighting="unit"`**: the ablation with synthetic points of unit weight, where `chi` indexes the number of synthetic points.
-- **`selection="safe"`**: augment only if some candidate beats no augmentation with simultaneous significance (the cross-validation-with-confidence test of Lei, 2020, with a max-T critical value). Under the stated conditions, including loss stability, this controls asymptotically the probability of choosing an augmentation that does not improve on the natural fit.
+- **`selection="best"`** (default) and **`selection="1se"`**: the candidate with the smallest recalibrated cross-validated loss, or the natural fit unless the best candidate improves on it by more than one standard error. With `keep_candidates=True`, `predict_proba_candidates` evaluates every candidate and `imbcal.select_candidate` applies either rule to stored results.
+- **`selection="safe"`** (experimental): augment only if some candidate beats no augmentation with simultaneous significance (the cross-validation-with-confidence test of Lei, 2020, with a max-T critical value). Under the stated conditions, including loss stability, this controls asymptotically the probability of choosing an augmentation that does not improve on the natural fit.
 
 Synthetic draws use common random numbers: each generator has a fixed seed derived from `random_state`, and the same draws are used in every fold and in the final refit. The [user guide](https://github.com/rolandodelacruz74/imbcal/blob/main/docs/user_guide.md) explains the weights, the safe selection and its assumptions, the diagnostics and the planning tool.
 
@@ -52,7 +53,7 @@ More examples: `examples/quickstart.py` (simulated data, scikit-learn only) and 
 
 ## Status
 
-Alpha (0.4.1). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Changes are listed in [CHANGELOG.md](https://github.com/rolandodelacruz74/imbcal/blob/main/CHANGELOG.md). Planned additions:
+Alpha (0.5.0). Binary outcomes only; requires scikit-learn >= 1.6. The API may change before 1.0. Changes are listed in [CHANGELOG.md](https://github.com/rolandodelacruz74/imbcal/blob/main/CHANGELOG.md). Planned additions:
 - generators for mixed (continuous and categorical) features beyond `continuous_features`;
 - group-wise calibration diagnostics;
 - wrappers for deep tabular generators;

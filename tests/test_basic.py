@@ -128,6 +128,7 @@ def test_aligned_map_independent_of_fold():
     assert abs(a.intercept_ - b.intercept_) < 1e-8 and abs(a.slope_ - b.slope_) < 1e-8
 
 
+@pytest.mark.filterwarnings("ignore:selection=.safe.:FutureWarning")
 def test_safe_selection():
     import numpy as np
     from sklearn.linear_model import LogisticRegression
@@ -392,3 +393,58 @@ def test_continuous_features_copy_other_columns():
         GaussianGenerator(0.3, continuous_features=[0, 7]).sample(Xm, 5, np.random.default_rng(0))
     with pytest.raises(ValueError):
         GaussianGenerator(0.3, continuous_features=[True, False]).sample(Xm, 5, np.random.default_rng(0))
+
+
+# ---------------------------------------------------------------- 0.5.0: candidates, offline selection, SAFE-chi warning
+def _aug(**kw):
+    return ImbalanceCalibratedClassifier(LogisticRegression(max_iter=1000), strategy="augment",
+                                         generators=[GaussianGenerator(0.25), SMOTEGenerator(5)],
+                                         chi_grid=(0.0, 0.5), random_state=3, **kw)
+
+
+def test_keep_candidates_does_not_change_fit():
+    X, y = data(900, seed=4)
+    a = _aug().fit(X, y)
+    b = _aug(keep_candidates=True).fit(X, y)
+    assert a.selected_.label() == b.selected_.label()
+    assert np.allclose(a.predict_proba(X), b.predict_proba(X))
+    assert set(b.cv_loss_obs_) == set(b.cv_results_)
+    for lab, v in b.cv_loss_obs_.items():
+        assert np.isclose(v.mean(), b.cv_results_[lab])
+
+
+def test_predict_proba_candidates_matches_selected():
+    X, y = data(900, seed=5)
+    clf = _aug(keep_candidates=True).fit(X, y)
+    P = clf.predict_proba_candidates(X[:50])
+    assert set(P) == set(clf.cv_results_)
+    assert np.allclose(P[clf.selected_.label()], clf.predict_proba(X[:50])[:, 1])
+    with pytest.raises(AttributeError):
+        _aug().fit(X, y).predict_proba_candidates(X[:5])
+
+
+@pytest.mark.parametrize("rule", ["best", "1se"])
+def test_select_candidate_reproduces_fit(rule):
+    from imbcal import select_candidate
+    X, y = data(900, seed=6)
+    clf = _aug(keep_candidates=True, selection=rule).fit(X, y)
+    assert select_candidate(clf.cv_loss_obs_, "none", rule) == clf.selected_.label()
+    with pytest.raises(ValueError):
+        select_candidate(clf.cv_loss_obs_, "none", "safe")
+
+
+def test_safe_selection_is_flagged_experimental():
+    X, y = data(600, seed=7)
+    with pytest.warns(FutureWarning, match="experimental"):
+        _aug(selection="safe").fit(X, y)
+
+
+def test_xgboost_learner():
+    xgb = pytest.importorskip("xgboost")
+    X, y = data(900, seed=8)
+    clf = ImbalanceCalibratedClassifier(xgb.XGBClassifier(n_estimators=30, max_depth=2, verbosity=0),
+                                        strategy="augment", generators=[GaussianGenerator(0.25)],
+                                        chi_grid=(0.0, 0.5), keep_candidates=True, random_state=1).fit(X, y)
+    p = clf.predict_proba(X)[:, 1]
+    assert np.all((p > 0) & (p < 1))
+    assert len(clf.predict_proba_candidates(X[:10])) == 3

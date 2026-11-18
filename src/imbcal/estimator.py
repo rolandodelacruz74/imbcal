@@ -44,6 +44,28 @@ def _loss(name, y, p):
 # Integer-valued columns with at most this many distinct finite values are treated as discrete (ordinal or count
 # codes) by the check for continuous perturbation of discrete columns. Columns with at most two distinct finite values
 # are always treated as discrete, whatever their coding.
+def select_candidate(cv_loss_obs, base, rule="best"):
+    """Apply a selection rule to per-observation recalibrated cross-validated losses.
+
+    ``cv_loss_obs`` maps candidate labels to arrays of per-observation losses (the attribute ``cv_loss_obs_`` of a
+    classifier fitted with ``keep_candidates=True``, or the same quantity computed elsewhere); ``base`` is the label of
+    the reference candidate (``"none"`` for the natural fit). ``rule`` is ``"best"`` (smallest mean loss) or ``"1se"``
+    (keep ``base`` unless the best candidate improves on it by more than one standard error of the per-observation
+    loss difference, that is, unless the studentized mean difference is below -1). Ties are broken by the order of
+    ``cv_loss_obs``. This is the function used by :meth:`ImbalanceCalibratedClassifier.fit`, so applying it to stored
+    losses reproduces the selections of the fit. ``"safe"`` needs the fold structure and is not available here.
+    """
+    if rule not in ("best", "1se"):
+        raise ValueError(f"rule must be 'best' or '1se', not {rule!r}")
+    means = {c: float(np.mean(v)) for c, v in cv_loss_obs.items()}
+    best = min(cv_loss_obs, key=means.get)
+    if rule == "1se" and best != base:
+        d = np.asarray(cv_loss_obs[best]) - np.asarray(cv_loss_obs[base])
+        if not d.mean() < -d.std(ddof=1) / np.sqrt(len(d)):
+            best = base
+    return best
+
+
 _MAX_INTEGER_LEVELS = 5
 
 
@@ -160,6 +182,12 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         candidate's ``chi`` indexes the intensity: ``round((1 - chi) m)`` synthetic points are added (none for
         ``chi = 1``, all ``m`` for ``chi = 0``; the first points of the same seeded draw, so smaller intensities use a
         subset of larger ones). The training prevalence then shifts, and the recalibration absorbs the shift.
+    keep_candidates : bool, default False
+        Keep, for every candidate, its per-observation recalibrated cross-validated losses (``cv_loss_obs_``) and,
+        with ``output="ensemble"``, its fold predictors and recalibration maps, so that
+        :meth:`predict_proba_candidates` can evaluate all candidates and :func:`select_candidate` can apply the
+        selection rules to stored results. It does not change the fit, the selection or the predictions; it increases
+        memory by a factor of about the number of candidates.
     random_state : int, numpy Generator or None
         Seeds the fold assignment, the generator seeds and the max-T simulation of ``selection="safe"``.
 
@@ -182,6 +210,9 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     ----------
     selected_ : Candidate chosen.
     cv_results_ : dict label -> cross-validated recalibrated loss.
+    cv_loss_obs_ : dict label -> per-observation recalibrated cross-validated losses (``keep_candidates=True``).
+    candidate_estimators_, candidate_calibrators_ : dict label -> fold predictors and maps of every candidate
+        (``keep_candidates=True`` and ``output="ensemble"``).
     candidate_distance_ : root mean squared distance, on uncalibrated out-of-fold scores, between the selected scheme
         and ``chi = 1``. A diagnostic related to the expected-loss bound of Proposition 9 of the companion paper, which
         uses the maximum over candidates of the distance between recalibrated predictions.
@@ -195,7 +226,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
     def __init__(self, estimator, strategy="none", generators=None, chi_grid=(0.0, 0.1, 0.25, 0.5, 0.75),
                  calibration="platt", criterion="log_loss", selection="best", n_synthetic=None, cv=5,
                  nested="aligned", output="ensemble", stratify=True, alpha=0.2, variance_floor=0.05,
-                 weighting="prevalence", random_state=None):
+                 weighting="prevalence", keep_candidates=False, random_state=None):
         self.estimator = estimator
         self.strategy = strategy
         self.generators = generators
@@ -211,6 +242,7 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         self.alpha = alpha
         self.variance_floor = variance_floor
         self.weighting = weighting
+        self.keep_candidates = keep_candidates
         self.random_state = random_state
 
     # ------------------------------------------------------------------ internals
@@ -325,6 +357,11 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
             raise ValueError(f"unknown output {self.output!r}")
         if self.selection not in ("best", "1se", "safe"):
             raise ValueError(f"unknown selection {self.selection!r}")
+        if self.selection == "safe":
+            warnings.warn("selection='safe' (SAFE-chi) is experimental: its guarantee is asymptotic and conditional "
+                          "(see the docstring) and the method is not yet described in a published article; the "
+                          "default selection='best' and selection='1se' are the rules evaluated in the companion "
+                          "papers.", FutureWarning, stacklevel=2)
         if self.weighting not in ("prevalence", "unit"):
             raise ValueError(f"unknown weighting {self.weighting!r}; use 'prevalence' or 'unit'")
         y = (y == self.classes_[1]).astype(int)
@@ -379,16 +416,19 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
                     pred[c][va] = maps[c][v].predict(oof[c][va])
         crit_obs = {c: _loss(self.criterion, y, pred[c]) for c in cands}
         crit = {c: float(v.mean()) for c, v in crit_obs.items()}
-        best = min(cands, key=crit.get)
         base = cands[0]
-        if self.selection == "1se" and best != base:
-            d = crit_obs[best] - crit_obs[base]
-            if not d.mean() < -d.std(ddof=1) / np.sqrt(len(d)):
-                best = base
+        if self.selection in ("best", "1se"):
+            by_label = {c.label(): c for c in cands}
+            best = by_label[select_candidate({c.label(): crit_obs[c] for c in cands}, base.label(), self.selection)]
         elif self.selection == "safe":
             best, self.safe_z_, self.safe_critical_value_ = self._safe_select(cands, crit, crit_obs, fid, rng)
         self.selected_ = best
         self.cv_results_ = {c.label(): crit[c] for c in cands}
+        if self.keep_candidates:
+            self.cv_loss_obs_ = {c.label(): crit_obs[c] for c in cands}
+            if self.output == "ensemble":
+                self.candidate_estimators_ = {c.label(): fold_est[c] for c in cands}
+                self.candidate_calibrators_ = {c.label(): maps[c] for c in cands}
         self.candidate_distance_ = float(np.sqrt(np.mean((oof[best] - oof[base]) ** 2)))
         if self.output == "ensemble":
             self.estimators_ = fold_est[best]
@@ -451,6 +491,24 @@ class ImbalanceCalibratedClassifier(ClassifierMixin, BaseEstimator):
         else:
             p1 = self.calibrator_.predict(np.clip(self.estimator_.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6))
         return np.c_[1 - p1, p1]
+
+    def predict_proba_candidates(self, X):
+        """Calibrated fold-ensemble probabilities of the positive class for every candidate.
+
+        Requires ``keep_candidates=True`` and ``output="ensemble"``. Returns a dict from candidate labels to arrays;
+        the entry of ``selected_`` equals ``predict_proba(X)[:, 1]``. Useful to evaluate every candidate on a test set
+        and to apply other selection rules to stored results with :func:`select_candidate`.
+        """
+        check_is_fitted(self, "selected_")
+        if not hasattr(self, "candidate_estimators_"):
+            raise AttributeError("predict_proba_candidates requires keep_candidates=True and output='ensemble'")
+        X = validate_data(self, X, reset=False)
+        out = {}
+        for lab, ests in self.candidate_estimators_.items():
+            out[lab] = np.average([m.predict(np.clip(e.predict_proba(X)[:, 1], 1e-6, 1 - 1e-6))
+                                   for e, m in zip(ests, self.candidate_calibrators_[lab])], axis=0,
+                                  weights=self.fold_weights_)
+        return out
 
     def predict(self, X, threshold: float = 0.5):
         check_is_fitted(self, "selected_")

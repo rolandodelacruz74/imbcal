@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.0 (2026-11-18)
+
+### Added
+- `keep_candidates=True` keeps, for every candidate, its per-observation recalibrated cross-validated losses
+  (`cv_loss_obs_`) and, with `output="ensemble"`, its fold predictors and recalibration maps
+  (`candidate_estimators_`, `candidate_calibrators_`). The fit, the selection and the predictions are unchanged.
+- `predict_proba_candidates(X)`: calibrated fold-ensemble probabilities of every candidate, so that all candidates
+  can be evaluated on a test set (for instance to report an oracle, or the loss of each candidate, in a benchmark).
+- `imbcal.select_candidate(cv_loss_obs, base, rule)`: the selection rules `"best"` and `"1se"` as a function of
+  stored per-observation losses. It is the function used by `fit`, so it reproduces the selections of the fit
+  exactly. `"1se"` is the rule called the `z < -1` rule in the companion papers: it keeps the natural fit unless the
+  studentized mean difference of the best candidate against it is below -1.
+
+### Changed
+- `selection="safe"` (SAFE-chi) now emits a `FutureWarning` marking it as experimental: its guarantee is asymptotic
+  and conditional, and the method is not yet described in a published article. The default remains
+  `selection="best"`, the selection by recalibrated cross-validated loss; `"best"` and `"1se"` are the rules
+  evaluated in the companion papers. Results of `"safe"` are unchanged.
+
+### Notes
+- Version 0.4.1 was not released separately; its changes, listed below, are included in 0.5.0.
+- Selections, fitted models and predictions are identical to 0.4.1 for the same inputs and `random_state`.
+- Tested with XGBoost (`xgboost.XGBClassifier`) as the base learner.
+- The revised planning module announced for 0.5.0 (sample-size criteria for calibration and discrimination) is
+  deferred to a later version; `rebalancing_cost` is unchanged.
+
 ## 0.4.1 (2026-10-22)
 
 ### Fixed

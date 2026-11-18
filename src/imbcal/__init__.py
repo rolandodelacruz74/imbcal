@@ -8,14 +8,14 @@ maximum likelihood and of rebalanced logistic regressions in the proportional re
 """
 from .calibration import IsotonicCalibrator, PlattCalibrator, crossfit_calibrated
 from .diagnostics import majority_exposure
-from .estimator import Candidate, ImbalanceCalibratedClassifier
+from .estimator import Candidate, ImbalanceCalibratedClassifier, select_candidate
 from .generators import BaseGenerator, CallableGenerator, GaussianGenerator, SMOTEGenerator
 from .metrics import (calibration_slope_intercept, expected_calibration_error, paired_comparison,
                       probability_report)
 from .planning import print_rebalancing_cost, rebalancing_cost
 
-__version__ = "0.4.1"
-__all__ = ["ImbalanceCalibratedClassifier", "Candidate", "BaseGenerator", "SMOTEGenerator", "GaussianGenerator",
+__version__ = "0.5.0"
+__all__ = ["ImbalanceCalibratedClassifier", "Candidate", "select_candidate", "BaseGenerator", "SMOTEGenerator", "GaussianGenerator",
            "CallableGenerator", "PlattCalibrator", "IsotonicCalibrator", "crossfit_calibrated",
            "calibration_slope_intercept", "expected_calibration_error", "probability_report", "paired_comparison",
            "majority_exposure", "rebalancing_cost", "print_rebalancing_cost"]
